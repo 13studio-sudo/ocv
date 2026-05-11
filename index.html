@@ -1078,6 +1078,12 @@ table.kv tr.hl td { background: var(--bg-alt); }
   margin: 2px 0;
 }
 .pipeline .step .d { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--text-soft); }
+.pipeline .step.step-inactive {
+  opacity: 0.38;
+  filter: grayscale(0.6);
+}
+.pipeline .step.step-inactive::before { background: var(--line); opacity: 0.4; }
+.pipeline .step.step-inactive:hover { transform: none; box-shadow: none; background: var(--bg-alt); }
 .pipeline .arrow {
   width: 18px;
   display: flex;
@@ -1553,7 +1559,7 @@ svg.diag .refbox { stroke: var(--text); stroke-width: 0.6; stroke-dasharray: 2 2
 <!-- ============== STRIP 4 ============== -->
 <footer id="strip4">
   <div>OCV — OpenFOAM Case Viewer</div>
-  <div>Edition 0.0.5.X2 · 11 MAY 2026 · <a id="footerAbout" href="#about" class="brand-link">SHIBAYAMA MOTOR RACING</a></div>
+  <div>Edition 0.0.9 · 11 MAY 2026 · <a id="footerAbout" href="#about" class="brand-link">SHIBAYAMA MOTOR RACING</a></div>
   <div>© Project OCV · MIT-style demo</div>
 </footer>
 
@@ -3149,20 +3155,18 @@ function drawPipeline(p) {
     h: p.refSurface ? `Lvl ${p.refSurface.min}–${p.refSurface.max}` : '—',
     d: p.refRegion ? `wake lvl ${p.refRegion.level}` : ''
   });
-  if (hasRANS) {
-    stages.push({
-      t: hasLES ? 'RANS PRECURSOR' : 'RANS',
-      h: p.application && /simpleFoam/i.test(p.application) ? 'simpleFoam' : (p.solverModule || 'simpleFoam'),
-      d: p.rasModel || ''
-    });
-  }
-  if (hasLES) {
-    stages.push({
-      t:'LES',
-      h: p.lesApplication || 'pisoFoam',
-      d: p.lesModel ? `${p.lesModel}${p.lesDeltaT ? ', Δt=' + p.lesDeltaT + 's' : ''}` : ''
-    });
-  }
+  stages.push({
+    t: 'RANS PRECURSOR',
+    h: hasRANS ? (p.application && /simpleFoam/i.test(p.application) ? 'simpleFoam' : (p.solverModule || 'simpleFoam')) : '—',
+    d: p.rasModel || (hasRANS ? '' : 'no RAS model detected'),
+    inactive: !hasRANS
+  });
+  stages.push({
+    t:'LES',
+    h: hasLES ? (p.lesApplication || 'pisoFoam') : '—',
+    d: hasLES ? (p.lesModel ? `${p.lesModel}${p.lesDeltaT ? ', Δt=' + p.lesDeltaT + 's' : ''}` : '') : 'no LES detected',
+    inactive: !hasLES
+  });
   stages.push({
     t:'POST',
     h:'forceCoeffs',
@@ -3172,7 +3176,7 @@ function drawPipeline(p) {
   stages.forEach((s, i) => { s.t = String(i + 1).padStart(2, '0') + ' ' + s.t; });
   stages.forEach((s, i) => {
     const div = document.createElement('div');
-    div.className = 'step';
+    div.className = 'step' + (s.inactive ? ' step-inactive' : '');
     div.innerHTML = `<div class="t">${s.t}</div><div class="h">${s.h}</div><div class="d">${s.d}</div>`;
     el.appendChild(div);
     if (i < stages.length - 1) {
@@ -3526,7 +3530,7 @@ const ABOUT_HTML = `
 <p>MIT-licensed, free, no paid tier. PRs for additional parsers, validation rules, turbulence models, and translations are all welcome. If OCV mis-parses your case, open an issue with a minimal reproducer.</p>
 
 
-<p style="margin-top:24px;font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.16em;">PROJECT OCV · Edition 0.0.5.X2</p>
+<p style="margin-top:24px;font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.16em;">PROJECT OCV · Edition 0.0.9</p>
 `;
 document.getElementById('aboutBody').innerHTML = ABOUT_HTML;
 document.getElementById('footerAbout').addEventListener('click', e => { e.preventDefault(); renderSetupPane('info'); openModal('modalSetup'); });
@@ -3859,7 +3863,7 @@ function renderSetupPane(paneKey) {
         <p>OpenFOAM · Three.js r128 · JSZip 3.10 · pako 2.1 · GitHub · Vercel · Autodesk Fusion 360 · Claude (Anthropic). MIT-licensed, free, no paid tier. PRs welcome.</p>
 
         <table style="width:100%;margin-top:14px;font-family:'JetBrains Mono',monospace;font-size:10px;border-collapse:collapse;">
-          <tr><td style="color:var(--text-mute);padding:3px 0;">Edition</td><td style="color:var(--text);">0.0.5.X2</td></tr>
+          <tr><td style="color:var(--text-mute);padding:3px 0;">Edition</td><td style="color:var(--text);">0.0.9</td></tr>
           <tr><td style="color:var(--text-mute);padding:3px 0;">Source</td><td><a href="https://github.com/13studio-sudo/ocv.git" target="_blank" rel="noopener" style="color:var(--accent-red);">github.com/13studio-sudo/ocv.git</a></td></tr>
         </table>
 
