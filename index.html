@@ -1559,7 +1559,7 @@ svg.diag .refbox { stroke: var(--text); stroke-width: 0.6; stroke-dasharray: 2 2
 <!-- ============== STRIP 4 ============== -->
 <footer id="strip4">
   <div>OCV — OpenFOAM Case Viewer</div>
-  <div>Edition 0.0.9 · 11 MAY 2026 · <a id="footerAbout" href="#about" class="brand-link">SHIBAYAMA MOTOR RACING</a></div>
+  <div>Edition 0.0.10 · 11 MAY 2026 · <a id="footerAbout" href="#about" class="brand-link">SHIBAYAMA MOTOR RACING</a></div>
   <div>© Project OCV · MIT-style demo</div>
 </footer>
 
@@ -3155,16 +3155,25 @@ function drawPipeline(p) {
     h: p.refSurface ? `Lvl ${p.refSurface.min}–${p.refSurface.max}` : '—',
     d: p.refRegion ? `wake lvl ${p.refRegion.level}` : ''
   });
+  // RANS PRECURSOR — active when:
+  //   • hasRANS (a RAS model / simpleFoam detected), OR
+  //   • hasLES  (LES always requires a RANS precursor to generate ICs;
+  //              the Allrun proves this: motorBike RANS runs to t=500,
+  //              then that field is cloned as t=0 for the LES stage).
+  // It is only dimmed when neither RANS nor LES data is present.
+  const ransActive = hasRANS || hasLES;
   stages.push({
-    t: 'RANS PRECURSOR',
-    h: hasRANS ? (p.application && /simpleFoam/i.test(p.application) ? 'simpleFoam' : (p.solverModule || 'simpleFoam')) : '—',
-    d: p.rasModel || (hasRANS ? '' : 'no RAS model detected'),
-    inactive: !hasRANS
+    t: hasLES ? 'RANS PRECURSOR' : 'RANS',
+    h: hasRANS
+        ? (p.application && /simpleFoam/i.test(p.application) ? 'simpleFoam' : (p.solverModule || 'simpleFoam'))
+        : (hasLES ? 'simpleFoam' : '—'),
+    d: p.rasModel || (hasLES ? 'SpalartAllmaras (precursor)' : (hasRANS ? '' : '—')),
+    inactive: !ransActive
   });
   stages.push({
     t:'LES',
     h: hasLES ? (p.lesApplication || 'pisoFoam') : '—',
-    d: hasLES ? (p.lesModel ? `${p.lesModel}${p.lesDeltaT ? ', Δt=' + p.lesDeltaT + 's' : ''}` : '') : 'no LES detected',
+    d: hasLES ? (p.lesModel ? `${p.lesModel}${p.lesDeltaT ? ', Δt=' + p.lesDeltaT + 's' : ''}` : '') : '—',
     inactive: !hasLES
   });
   stages.push({
@@ -3530,7 +3539,7 @@ const ABOUT_HTML = `
 <p>MIT-licensed, free, no paid tier. PRs for additional parsers, validation rules, turbulence models, and translations are all welcome. If OCV mis-parses your case, open an issue with a minimal reproducer.</p>
 
 
-<p style="margin-top:24px;font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.16em;">PROJECT OCV · Edition 0.0.9</p>
+<p style="margin-top:24px;font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.16em;">PROJECT OCV · Edition 0.0.10</p>
 `;
 document.getElementById('aboutBody').innerHTML = ABOUT_HTML;
 document.getElementById('footerAbout').addEventListener('click', e => { e.preventDefault(); renderSetupPane('info'); openModal('modalSetup'); });
@@ -3863,7 +3872,7 @@ function renderSetupPane(paneKey) {
         <p>OpenFOAM · Three.js r128 · JSZip 3.10 · pako 2.1 · GitHub · Vercel · Autodesk Fusion 360 · Claude (Anthropic). MIT-licensed, free, no paid tier. PRs welcome.</p>
 
         <table style="width:100%;margin-top:14px;font-family:'JetBrains Mono',monospace;font-size:10px;border-collapse:collapse;">
-          <tr><td style="color:var(--text-mute);padding:3px 0;">Edition</td><td style="color:var(--text);">0.0.9</td></tr>
+          <tr><td style="color:var(--text-mute);padding:3px 0;">Edition</td><td style="color:var(--text);">0.0.10</td></tr>
           <tr><td style="color:var(--text-mute);padding:3px 0;">Source</td><td><a href="https://github.com/13studio-sudo/ocv.git" target="_blank" rel="noopener" style="color:var(--accent-red);">github.com/13studio-sudo/ocv.git</a></td></tr>
         </table>
 
