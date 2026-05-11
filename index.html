@@ -1,0 +1,4073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>OCV — OpenFOAM Case Viewer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Saira+Condensed:wght@300;400;500;600;700&family=Saira:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-alt: #f4f4f4;
+  --bg-deep: #ececec;
+  --panel: #fafafa;
+  --line: #c8c8c8;
+  --line-soft: #e0e0e0;
+  --text: #0a0a0a;
+  --text-soft: #555;
+  --text-mute: #888;
+  --accent: #111;
+  --warn: #8a4a00;
+  --ok: #555555;
+  --err: #a01818;
+  --accent-red: #c8102e;
+  --accent-red-dim: #a00d24;
+  /* Light mode is monotone + red — no blue. The "cyan" tokens are remapped
+     to neutral greys here so any UI that references --accent-cyan still
+     looks correct without introducing blue. */
+  --accent-cyan: #4a4a4a;
+  --accent-cyan-dim: #2a2a2a;
+  --glow-red: 0 0 10px rgba(200, 16, 46, 0.55);
+  --glow-cyan: 0 0 8px rgba(80, 80, 80, 0.35);
+  --layer-1: #b8b0a0;
+  --layer-2: #a0a8b0;
+  --layer-3: #b0a8b0;
+  --layer-4: #a8b0a8;
+  --layer-5: #b0a8a0;
+  --layer-6: #a0b0b0;
+}
+[data-theme="dark"] {
+  --bg: #0c0c0c;
+  --bg-alt: #161616;
+  --bg-deep: #0a0a0a;
+  --panel: #131313;
+  --line: #303030;
+  --line-soft: #1f1f1f;
+  --text: #f0f0f0;
+  --text-soft: #b8b8b8;
+  --text-mute: #777;
+  --accent: #f0f0f0;
+  --warn: #d97a3a;
+  --ok: #88a8d8;
+  --err: #d65c5c;
+  --accent-red: #ff2a44;
+  --accent-red-dim: #b71c1c;
+  --accent-cyan: #00d9ff;
+  --accent-cyan-dim: #0099cc;
+  --glow-red: 0 0 16px rgba(255, 42, 68, 0.65), 0 0 2px rgba(255, 42, 68, 0.9);
+  --glow-cyan: 0 0 14px rgba(0, 217, 255, 0.55), 0 0 2px rgba(0, 217, 255, 0.85);
+  --layer-1: #6a6258;
+  --layer-2: #5a6068;
+  --layer-3: #645a64;
+  --layer-4: #5e6a5e;
+  --layer-5: #6a5e58;
+  --layer-6: #586868;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ===== v2 cyberpunk + motorsport — global motion + scan overlay ===== */
+button, .geom-row, .toggle-row button, input[type=color], input[type=range],
+.theme-toggle, .theme-toggle div, .resizer, .hresize, #strip0 .center,
+.dash h3, .geom-swatch, .pipeline .step {
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease,
+              box-shadow 200ms ease, outline 120ms ease, transform 160ms ease,
+              opacity 160ms ease;
+}
+
+/* faint horizontal scanlines fixed over the entire UI — cyberpunk monitor feel */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.025) 0px,
+    rgba(255, 255, 255, 0.025) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: overlay;
+  opacity: 0.7;
+}
+[data-theme="light"] body::before, body[data-theme="light"]::before {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.018) 0px,
+    rgba(0, 0, 0, 0.018) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: multiply;
+}
+
+/* very subtle vignette glow behind the brand strip in dark mode */
+body[data-theme="dark"] #strip0 {
+  background:
+    radial-gradient(ellipse 60% 100% at 50% 0%, rgba(255, 42, 68, 0.10), transparent 60%),
+    var(--bg-alt);
+}
+@keyframes pulse-red {
+  0%, 100% { box-shadow: var(--glow-red); }
+  50%      { box-shadow: 0 0 22px rgba(255, 42, 68, 0.85), 0 0 3px rgba(255, 42, 68, 1); }
+}
+@keyframes scan-x {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Saira', 'Saira Condensed', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  height: 100%;
+  overflow: hidden;
+}
+/* 4K big-screen scaling — bumps the entire UI proportionally */
+@media (min-width: 1920px) { html, body { font-size: 15px; } }
+@media (min-width: 2560px) {
+  html, body { font-size: 17px; }
+  body { grid-template-rows: 44px 46px 1fr 8px var(--s3h, 360px) 28px !important; }
+}
+@media (min-width: 3200px) {
+  html, body { font-size: 20px; }
+  body { grid-template-rows: 52px 54px 1fr 10px var(--s3h, 440px) 32px !important; }
+}
+body {
+  display: grid;
+  grid-template-rows: 36px 38px 1fr 6px var(--s3h, 280px) 22px;
+  height: 100vh;
+}
+.hresize {
+  background: var(--line-soft);
+  cursor: row-resize;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.hresize:hover { background: var(--line); }
+.mono { font-family: 'JetBrains Mono', 'Courier New', monospace; }
+.cond { font-family: 'Saira Condensed', 'Saira', sans-serif; letter-spacing: 0.04em; }
+.upper { text-transform: uppercase; }
+.muted { color: var(--text-mute); }
+.soft { color: var(--text-soft); }
+
+button, input[type=file]::file-selector-button {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 0;
+}
+button {
+  /* motorsport cut-corner silhouette */
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  position: relative;
+}
+button:hover {
+  background: var(--text);
+  color: var(--bg);
+  box-shadow: var(--glow-cyan);
+  transform: translateY(-1px);
+}
+button.active {
+  background: var(--accent-red);
+  color: #fff;
+  border-color: var(--accent-red);
+  box-shadow: var(--glow-red);
+}
+button.active:hover {
+  background: var(--accent-red-dim);
+  border-color: var(--accent-red-dim);
+  box-shadow: var(--glow-red);
+}
+button:disabled { opacity: 0.4; cursor: not-allowed; clip-path: none; }
+@media (min-width: 1920px) { button { font-size: 12px; padding: 5px 12px; } }
+@media (min-width: 2560px) { button { font-size: 13px; padding: 7px 14px; } }
+
+/* ===================== STRIP 0 ===================== */
+#strip0 {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-alt);
+  padding: 0 12px;
+  gap: 16px;
+}
+#strip0 .left { font-size: 11px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Brand mark — same family / size / color as a Strip-3 section header,
+   with a v2 cyberpunk treatment: red glow + cyan scan-stripe + chevrons */
+#strip0 .center {
+  font-family: 'Saira Condensed', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  font-size: clamp(10px, 0.6vw, 14px);
+  text-transform: uppercase;
+  color: var(--text);
+  padding: 4px 22px;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  position: relative;
+  text-shadow: 0 0 6px rgba(255, 42, 68, 0.55), 0 0 1px rgba(255, 42, 68, 1);
+  overflow: hidden;
+}
+#strip0 .center::before,
+#strip0 .center::after {
+  content: "◤";
+  position: absolute;
+  color: var(--accent-red);
+  font-size: 0.7em;
+  letter-spacing: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  text-shadow: 0 0 6px var(--accent-red);
+}
+#strip0 .center::before { left: 4px; }
+#strip0 .center::after  { right: 4px; content: "◢"; }
+/* cyan scan-stripe sweeping through the brand mark */
+#strip0 .center > span.scan {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 30%;
+  left: 0;
+  background: linear-gradient(90deg, transparent, rgba(0, 217, 255, 0.18), transparent);
+  pointer-events: none;
+  animation: scan-x 4s linear infinite;
+}
+#strip0 .right { display: flex; justify-content: flex-end; gap: 6px; align-items: center; }
+.theme-toggle {
+  width: 56px;
+  height: 22px;
+  border: 1px solid var(--line);
+  display: flex;
+  cursor: pointer;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+.theme-toggle div {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+}
+.theme-toggle div.on { background: var(--accent-red); color: #fff; box-shadow: var(--glow-red); }
+.theme-toggle:hover { box-shadow: var(--glow-cyan); }
+
+/* ===================== STRIP 1 ===================== */
+#strip1 {
+  display: grid;
+  grid-template-columns: 240px 1fr 360px;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+#strip1 > div { padding: 0 12px; display: flex; align-items: center; gap: 8px; }
+#strip1 > div + div { border-left: 1px solid var(--line); }
+#strip1 .case-name { font-size: 11px; letter-spacing: 0.06em; }
+#strip1 .case-name b { font-weight: 600; }
+#console {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-soft);
+  overflow: hidden;
+  white-space: nowrap;
+  position: relative;
+}
+#console::before {
+  /* small running cyan led on the left edge — telemetry feel */
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: var(--accent-cyan);
+  box-shadow: var(--glow-cyan);
+  margin-right: 8px;
+  animation: pulse-led 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+@keyframes pulse-led {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50%      { opacity: 1;    transform: scale(1.05); }
+}
+#console .log-line { padding-right: 18px; }
+#console .log-line:first-child {
+  color: var(--text);
+  text-shadow: 0 0 6px rgba(0, 217, 255, 0.4);
+}
+#console .log-line.warn { color: var(--warn); }
+#console .log-line.err { color: var(--err); text-shadow: 0 0 6px rgba(255, 0, 0, 0.5); }
+#console .log-line.ok { color: var(--ok); }
+.btn-row { display: flex; gap: 4px; }
+
+/* ===================== STRIP 2 ===================== */
+#strip2 {
+  display: grid;
+  grid-template-columns: 15% 8px 70% 8px 15%;
+  min-height: 0;
+  border-bottom: 1px solid var(--line);
+}
+.resizer { background: var(--line-soft); cursor: col-resize; }
+.resizer:hover { background: var(--line); }
+.col {
+  background: var(--panel);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.col-head {
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-alt);
+  position: relative;
+  text-shadow: 0 0 6px rgba(0, 217, 255, 0.35);
+}
+.col-head::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, var(--accent-cyan) 0, var(--accent-cyan) 30%, transparent 100%);
+  opacity: 0.5;
+}
+.col-body { padding: 8px 10px; flex: 1; min-height: 0; overflow: auto; }
+/* Hide the visible scrollbar on the geometry tree + dashboard strip while
+   keeping the content scrollable. WebKit + Firefox + IE/old-Edge variants. */
+#colLeft .col-body::-webkit-scrollbar,
+#colRight .col-body::-webkit-scrollbar,
+#strip3::-webkit-scrollbar { display: none; width: 0; height: 0; }
+#colLeft .col-body,
+#colRight .col-body,
+#strip3 { scrollbar-width: none; -ms-overflow-style: none; }
+
+/* === Geometry / Layers panel — redesigned for legibility === */
+.geom-tree { font-size: 11px; }
+.layer-bulk {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 12px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.layer-bulk button {
+  flex: 1;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  padding: 5px 6px;
+}
+
+.geom-row {
+  display: grid;
+  /* eye | swatch | spacer | name+meta | spacer | slider */
+  grid-template-columns: 16px 18px 6px 1fr 6px 64px;
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: center;
+  padding: 12px 12px 12px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line-soft);
+  position: relative;
+}
+/* slide-in red bar on left edge — cyberpunk panel reveal */
+.geom-row::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0;
+  background: var(--accent-red);
+  box-shadow: var(--glow-red);
+  transition: width 180ms ease;
+}
+.geom-row:hover::before { width: 3px; }
+.geom-row.selected::before { width: 4px; box-shadow: var(--glow-red); }
+.geom-row:last-child { border-bottom: none; }
+.geom-row:hover { background: var(--bg-alt); }
+.geom-row.selected { background: var(--accent-red); color: #fff; box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.25), var(--glow-red); }
+.geom-row.hidden .geom-name,
+.geom-row.hidden .geom-meta { opacity: 0.35; text-decoration: line-through; }
+
+.geom-eye {
+  grid-row: 1 / span 2;
+  grid-column: 1;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: var(--text);
+  cursor: pointer;
+  display: block;
+  text-indent: -9999px;
+  overflow: hidden;
+}
+.geom-eye[data-vis="0"] { background: transparent; }
+.geom-row.selected .geom-eye { border-color: #fff; }
+.geom-row.selected .geom-eye[data-vis="1"] { background: #fff; }
+
+.geom-swatch {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  width: 18px; height: 18px;
+  border: 1px solid var(--text-soft);
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  flex-shrink: 0;
+  transition: outline 0.1s ease;
+}
+.geom-swatch:hover { outline: 2px solid var(--accent-red); outline-offset: 1px; }
+.geom-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.geom-swatch::-webkit-color-swatch { border: none; }
+.geom-swatch::-moz-color-swatch { border: none; }
+
+/* name + meta share the wide text column (col 4) — column 3 is a hard
+   spacer between the icon block (eye+swatch) and the text. */
+.geom-name {
+  grid-column: 4;
+  grid-row: 1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.geom-meta {
+  grid-column: 4;
+  grid-row: 2;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--text-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: 0;
+}
+.geom-row.selected .geom-meta { color: rgba(255,255,255,0.85); }
+
+.geom-opacity {
+  grid-column: 6;
+  grid-row: 1 / span 2;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: var(--line);
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+}
+.geom-opacity::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 16px;
+  background: var(--text);
+  border: 1px solid var(--bg);
+  cursor: pointer;
+  border-radius: 0;
+}
+.geom-opacity::-moz-range-thumb {
+  width: 10px;
+  height: 16px;
+  background: var(--text);
+  border: 1px solid var(--bg);
+  cursor: pointer;
+  border-radius: 0;
+}
+.geom-row.selected .geom-opacity { background: rgba(0,0,0,0.4); }
+.geom-row.selected .geom-opacity::-webkit-slider-thumb { background: #fff; border-color: var(--accent-red); }
+
+@media (min-width: 1920px) {
+  .geom-tree { font-size: 12px; }
+  .geom-name { font-size: 12px; }
+  .geom-meta { font-size: 10px; }
+  .geom-swatch { width: 22px; height: 22px; }
+  .geom-eye   { width: 16px; height: 16px; }
+}
+@media (min-width: 2560px) {
+  .geom-tree { font-size: 14px; }
+  .geom-name { font-size: 14px; }
+  .geom-meta { font-size: 11px; }
+  .geom-swatch { width: 26px; height: 26px; }
+  .geom-eye   { width: 20px; height: 20px; }
+  .geom-opacity { height: 8px; }
+}
+
+/* viewer */
+#viewer-wrap {
+  position: relative;
+  background: var(--bg-deep);
+  min-height: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+}
+#viewer-canvas { display: block; width: 100%; height: 100%; }
+.viewer-toolbar {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 6px;
+  z-index: 5;
+}
+.viewer-toolbar .group { display: flex; flex-direction: column; gap: 2px; }
+.viewer-toolbar .group + .group { border-top: 1px solid var(--line-soft); padding-top: 4px; margin-top: 2px; }
+.viewer-toolbar .lbl {
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
+  text-shadow: 0 0 4px rgba(0, 217, 255, 0.4);
+}
+.viewer-toolbar .lbl::before { content: "» "; color: var(--accent-red); }
+.viewer-toolbar {
+  border: 1px solid var(--line);
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5), inset 0 0 0 1px rgba(0, 217, 255, 0.06);
+}
+.viewer-toolbar button { padding: 3px 6px; font-size: 9px; min-width: 60px; text-align: left; }
+.axis-label {
+  position: absolute;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-deep);
+  padding: 1px 4px;
+  border: 1px solid var(--accent-cyan);
+  pointer-events: none;
+  letter-spacing: 0.06em;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  white-space: nowrap;
+  box-shadow: 0 0 6px rgba(0, 217, 255, 0.4);
+  text-shadow: 0 0 4px rgba(0, 217, 255, 0.3);
+}
+/* monotone labels — keep them legible on both themes via inherited --text */
+.axis-label.x,
+.axis-label.y,
+.axis-label.z { color: var(--text); }
+
+/* Domain dimension labels — float over the 3D viewport, sized to match
+   the existing axis-label scheme but in cyan to read as "measurements" */
+.dim-label {
+  position: absolute;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent-cyan);
+  background: var(--bg-deep);
+  padding: 1px 5px;
+  border: 1px solid var(--accent-cyan);
+  pointer-events: none;
+  letter-spacing: 0.04em;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  white-space: nowrap;
+  box-shadow: 0 0 6px rgba(0, 217, 255, 0.35);
+}
+.viewer-tooltip {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  font-size: 9px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-mute);
+  background: var(--bg);
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+}
+
+/* properties */
+.prop-grid { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 10px; }
+.prop-grid dt { color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.06em; }
+.prop-grid dd { font-family: 'JetBrains Mono', monospace; word-break: break-all; }
+.prop-section { margin-bottom: 12px; }
+.prop-section h4 {
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 3px;
+  margin-bottom: 6px;
+  font-weight: 600;
+  text-shadow: 0 0 6px rgba(0, 217, 255, 0.3);
+}
+.prop-section h4::before {
+  content: "▸ ";
+  color: var(--accent-red);
+  text-shadow: 0 0 4px var(--accent-red);
+}
+.toggle-row { display: flex; gap: 0; margin-bottom: 4px; }
+.toggle-row button { flex: 1; min-width: 0; }
+.toggle-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+.toggle-grid button {
+  width: 100%;
+  text-align: center;
+  padding: 6px 4px;
+  font-size: 10px;
+}
+
+/* footer brand link */
+.brand-link {
+  color: var(--accent-red);
+  text-decoration: none;
+  letter-spacing: 0.16em;
+  text-shadow: 0 0 6px rgba(255, 42, 68, 0.5);
+  transition: text-shadow 160ms ease, color 160ms ease;
+}
+.brand-link:hover {
+  color: var(--accent-cyan);
+  text-shadow: 0 0 8px rgba(0, 217, 255, 0.6);
+}
+
+/* Telemetry mini-plot — motorsport-style multi-trace
+   v2.0.3: edge-to-edge by escaping the prop-section padding via negative
+   margins; doubled scan rate; taller. */
+#telemetry {
+  height: 160px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-left: none;
+  border-right: none;
+  background: var(--bg-deep);
+  position: relative;
+  overflow: hidden;
+  margin: 0 -10px -10px;        /* escape parent padding-x and bottom */
+  width: calc(100% + 20px);
+}
+#telemetry svg { width: 100%; height: 100%; display: block; }
+#telemetry .tlm-label {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--accent-cyan);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  pointer-events: none;
+}
+#telemetry .tlm-stat {
+  position: absolute;
+  bottom: 4px;
+  right: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--text);
+  pointer-events: none;
+}
+#telemetry .tlm-legend {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+#telemetry .tlm-legend span { display: flex; align-items: center; gap: 3px; }
+#telemetry .tlm-legend i {
+  display: inline-block;
+  width: 8px; height: 2px;
+  background: currentColor;
+}
+/* Telemetry sample-rate slider — sits below the legend in the top-right */
+#telemetry .tlm-rate {
+  position: absolute;
+  top: 18px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--text-mute);
+  z-index: 2;
+  pointer-events: auto;
+}
+#telemetry .tlm-rate input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 70px;
+  height: 3px;
+  background: var(--line);
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+}
+#telemetry .tlm-rate input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 7px;
+  height: 9px;
+  background: var(--accent-cyan);
+  border: 0;
+  cursor: pointer;
+  border-radius: 0;
+}
+#telemetry .tlm-rate input[type=range]::-moz-range-thumb {
+  width: 7px;
+  height: 9px;
+  background: var(--accent-cyan);
+  border: 0;
+  cursor: pointer;
+  border-radius: 0;
+}
+#telemetry .tlm-rate-val { min-width: 28px; color: var(--accent-cyan); }
+#telemetry .tlm-bg-line {
+  stroke: var(--line);
+  stroke-width: 0.4;
+  stroke-dasharray: 2 2;
+  fill: none;
+}
+
+/* Strip 3 close-section button + Setup re-add UI */
+.section-close {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--text-mute);
+  color: var(--text-mute);
+  width: 18px;
+  height: 18px;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  clip-path: none;
+  font-family: inherit;
+}
+.section-close:hover {
+  background: var(--accent-red);
+  border-color: var(--accent-red);
+  color: #fff;
+  box-shadow: var(--glow-red);
+  transform: none;
+}
+.dash > section.hidden { display: none; }
+
+/* ===== Modal / popup framework ===== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 24px;
+  backdrop-filter: blur(4px);
+}
+.modal-backdrop.show { display: flex; }
+.modal {
+  background: var(--bg);
+  border: 1px solid var(--accent-red);
+  box-shadow: var(--glow-red), 0 0 60px rgba(0, 0, 0, 0.6);
+  max-width: 920px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  /* motorsport cut corners */
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 2px solid var(--accent-red);
+  font-family: 'Saira Condensed', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-size: 12px;
+  color: var(--accent-red);
+  text-shadow: 0 0 6px rgba(255, 42, 68, 0.5);
+}
+.modal-head .close-x {
+  background: none;
+  border: 1px solid var(--accent-red);
+  color: var(--accent-red);
+  font-size: 14px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+  padding: 0;
+  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+}
+.modal-head .close-x:hover { background: var(--accent-red); color: #fff; }
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text);
+}
+.modal-body h1, .modal-body h2, .modal-body h3 {
+  font-family: 'Saira Condensed', sans-serif;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-top: 18px;
+  margin-bottom: 8px;
+}
+.modal-body h1 { font-size: 18px; color: var(--accent-red); border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.modal-body h2 { font-size: 14px; color: var(--accent-cyan); }
+.modal-body h3 { font-size: 12px; color: var(--text); }
+.modal-body p { margin-bottom: 10px; }
+.modal-body a { color: var(--accent-cyan); text-decoration: none; border-bottom: 1px dotted var(--accent-cyan); }
+.modal-body a:hover { color: var(--accent-red); border-bottom-color: var(--accent-red); }
+.modal-body ul { margin: 8px 0 12px 18px; }
+.modal-body li { margin-bottom: 4px; }
+.modal-body code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: var(--bg-alt);
+  padding: 1px 5px;
+  border: 1px solid var(--line-soft);
+}
+
+/* Setup modal: 2-column layout */
+.setup-grid {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  min-height: 360px;
+  border: 1px solid var(--line);
+}
+.setup-list {
+  border-right: 1px solid var(--line);
+  background: var(--bg-alt);
+}
+.setup-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 16px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--text-soft);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  clip-path: none;
+  transition: background 160ms ease, color 160ms ease;
+}
+.setup-list button:hover { background: var(--bg-deep); color: var(--text); box-shadow: none; transform: none; }
+.setup-list button.active {
+  background: var(--bg-deep);
+  color: var(--accent-red);
+  border-left: 3px solid var(--accent-red);
+  border-bottom: 1px solid var(--line-soft);
+  box-shadow: none;
+}
+.setup-pane { padding: 18px 22px; }
+.setup-pane h2 {
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+}
+.theme-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.theme-card {
+  border: 1px solid var(--line);
+  padding: 10px;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: var(--bg-alt);
+}
+.theme-card:hover { border-color: var(--accent-cyan); box-shadow: var(--glow-cyan); transform: translateY(-2px); }
+.theme-card.selected { border-color: var(--accent-red); box-shadow: var(--glow-red); }
+.theme-swatches {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 8px;
+  height: 18px;
+}
+.theme-swatches span { flex: 1; }
+.theme-name { font-weight: 600; }
+.theme-desc { font-size: 9px; color: var(--text-mute); margin-top: 4px; letter-spacing: 0.06em; }
+
+/* ===================== STRIP 3 ===================== */
+#strip3 {
+  background: var(--bg);
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line);
+  min-height: 0;
+}
+.dash {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 1px;
+  background: var(--line);
+}
+.dash > section {
+  background: var(--bg);
+  padding: 10px 14px;
+  min-height: 120px;
+}
+.dash h3 {
+  font-family: 'Saira Condensed', sans-serif;
+  font-weight: 600;
+  font-size: clamp(10px, 0.6vw, 14px);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--accent-red);
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+/* race chevron before the section number */
+.dash h3::before {
+  content: "▶";
+  color: var(--accent-red);
+  font-size: 0.7em;
+  margin-right: 6px;
+  text-shadow: 0 0 6px var(--accent-red);
+}
+/* glowing cyan stripe sliding along the bottom edge on section hover */
+.dash h3::after {
+  content: "";
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  height: 2px;
+  width: 0;
+  background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+  box-shadow: var(--glow-cyan);
+  transition: width 360ms ease;
+}
+.dash > section:hover h3::after { width: 100%; }
+.dash h3 .num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: clamp(9px, 0.55vw, 13px);
+  color: var(--accent-red);
+  font-weight: 700;
+  margin-right: 10px;
+  text-shadow: 0 0 6px rgba(255, 42, 68, 0.6);
+}
+.s-workflow { grid-column: span 12; }
+.s-models   { grid-column: span 4; }
+.s-equations { grid-column: span 4; }
+.s-bcs      { grid-column: span 4; }
+.s-params   { grid-column: span 4; }
+.s-mesh     { grid-column: span 4; }
+.s-aero     { grid-column: span 4; }
+.s-init     { grid-column: span 4; }
+.s-quality  { grid-column: span 4; }
+.s-functions{ grid-column: span 4; }
+.s-decomp   { grid-column: span 6; }
+
+table.kv {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+table.kv td, table.kv th {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+}
+table.kv th {
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-mute);
+  font-size: 9px;
+  background: var(--bg-alt);
+}
+table.kv td:first-child { color: var(--text-mute); width: 38%; }
+table.kv td.val { font-family: 'JetBrains Mono', monospace; color: var(--text); }
+table.kv tr.hl td { background: var(--bg-alt); }
+
+.eqn { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 4px 0; line-height: 1.5; }
+.eqn .lbl { color: var(--text-mute); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; display: block; margin-top: 4px; }
+
+.pipeline { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+.pipeline .step {
+  flex: 1;
+  min-width: 140px;
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  background: var(--bg-alt);
+  position: relative;
+  /* motorsport cut top-right corner */
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+}
+.pipeline .step::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent-red), var(--accent-cyan));
+  opacity: 0.6;
+}
+.pipeline .step:hover {
+  background: var(--bg-deep);
+  transform: translateY(-2px);
+  box-shadow: var(--glow-red);
+}
+.pipeline .arrow {
+  color: var(--accent-cyan);
+  text-shadow: var(--glow-cyan);
+}
+.pipeline .step + .step { margin-left: -1px; }
+.pipeline .step .t {
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+.pipeline .step .h {
+  font-weight: 600;
+  font-size: 12px;
+  margin: 2px 0;
+}
+.pipeline .step .d { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--text-soft); }
+.pipeline .arrow {
+  width: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--text-mute);
+}
+
+/* ===================== STRIP 4 ===================== */
+#strip4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--text-mute);
+  background: var(--bg-alt);
+  border-top: 1px solid var(--line);
+  text-transform: uppercase;
+  position: relative;
+}
+#strip4::before {
+  content: "";
+  position: absolute;
+  top: -1px; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--accent-red) 25%,
+    var(--accent-cyan) 75%,
+    transparent 100%);
+  opacity: 0.55;
+}
+
+/* drop overlay */
+#drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  pointer-events: none;
+}
+#drop-overlay.show { display: flex; }
+#drop-overlay .box {
+  border: 2px dashed var(--bg);
+  color: var(--bg);
+  padding: 40px 80px;
+  font-family: 'Saira Condensed', sans-serif;
+  letter-spacing: 0.4em;
+  font-size: 22px;
+  text-transform: uppercase;
+}
+
+/* SVG diagram styling */
+svg.diag { width: 100%; height: auto; display: block; }
+svg.diag text { font-family: 'JetBrains Mono', monospace; font-size: 8px; fill: var(--text); }
+svg.diag .axis { stroke: var(--text-mute); stroke-width: 0.5; fill: none; }
+svg.diag .domain { stroke: var(--text); stroke-width: 1; fill: var(--bg-alt); }
+svg.diag .veh { fill: var(--text); stroke: var(--text); }
+svg.diag .arrow { stroke: var(--text); stroke-width: 1.2; fill: none; }
+svg.diag .arrow-head { fill: var(--text); }
+svg.diag .dim { stroke: var(--text-mute); stroke-width: 0.4; fill: none; }
+svg.diag .dim text { fill: var(--text-mute); }
+svg.diag .refbox { stroke: var(--text); stroke-width: 0.6; stroke-dasharray: 2 2; fill: none; }
+
+.scroll-x { overflow-x: auto; }
+
+/* validity dots */
+.dot { display: inline-block; width: 6px; height: 6px; margin-right: 4px; }
+.dot.ok  { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.err { background: var(--err); }
+
+/* hidden file input */
+#fileInput { display: none; }
+
+/* ========================================================================
+   Mobile / cell phone RWD (≤ 720 px viewport)
+   - Stack the 5 strips vertically as a normal scrolling document
+   - Stack Strip 2's three columns one above another, viewport at 60vh
+   - Single-column dashboards in Strip 3, pipeline scrolls horizontally
+   - Hide the column / Strip-3 drag resizers (no purpose on touch)
+   - Bigger tap targets, looser padding, weaker scanlines
+   ======================================================================== */
+@media (max-width: 720px) {
+  html, body {
+    height: auto;
+    overflow: auto;
+    font-size: 13px;
+  }
+  body {
+    display: block;
+    grid-template-rows: none;
+    height: auto;
+  }
+  body::before { opacity: 0.35; }
+
+  /* Strip 0 — vertical stack of three rows */
+  #strip0 {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    height: auto;
+    padding: 8px 12px;
+    gap: 6px;
+    text-align: center;
+  }
+  #strip0 .left, #strip0 .right { justify-content: center; flex-wrap: wrap; }
+  #strip0 .center {
+    border-left: none; border-right: none;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 8px 0;
+  }
+
+  /* Strip 1 — single column, buttons wrap */
+  #strip1 {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+  }
+  #strip1 > div {
+    border-left: none !important;
+    border-top: 1px solid var(--line);
+    padding: 8px 12px;
+    height: auto;
+    width: 100%;
+  }
+  #strip1 > div:first-child { border-top: none; }
+  #strip1 .btn-row {
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 4px;
+    justify-content: stretch;
+  }
+  #strip1 .btn-row button {
+    flex: 1 1 80px;
+    min-height: 40px;
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+  #console {
+    height: auto;
+    min-height: 28px;
+    overflow-x: auto;
+  }
+
+  /* Strip 2 — vertical stack, viewport gets a fixed-height window */
+  #strip2 {
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid var(--line);
+  }
+  #strip2 .resizer { display: none; }
+  #strip2 .col {
+    width: 100% !important;
+    max-height: none;
+  }
+  #colCenter {
+    height: 60vh;
+    min-height: 320px;
+    background: var(--bg-deep);
+  }
+  #colLeft, #colRight {
+    height: auto;
+    max-height: 50vh;
+    border-top: 1px solid var(--line);
+  }
+  #viewer-wrap { width: 100%; height: 100%; }
+  .viewer-toolbar {
+    top: 4px; left: 4px;
+    padding: 4px;
+    max-width: 130px;
+  }
+  .viewer-toolbar button {
+    font-size: 9px;
+    padding: 5px 6px;
+    min-width: 0;
+    text-align: left;
+  }
+  .axis-label { font-size: 11px; padding: 2px 5px; }
+
+  /* Strip-3 height resizer — hide on touch */
+  .hresize { display: none; }
+
+  /* Strip 3 — every section spans the full row */
+  #strip3 {
+    max-height: none;
+    overflow: visible;
+  }
+  .dash {
+    grid-template-columns: 1fr;
+  }
+  .dash > section {
+    grid-column: 1 / -1 !important;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  /* Pipeline scrolls sideways on phone */
+  .pipeline {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 6px;
+  }
+  .pipeline .step { flex: 0 0 200px; }
+
+  /* Bigger tap targets */
+  button { min-height: 36px; }
+  .geom-row { padding: 14px 10px; }
+  .geom-eye { width: 18px; height: 18px; }
+  .geom-swatch { width: 22px; height: 22px; }
+  .geom-opacity { height: 8px; }
+  .geom-opacity::-webkit-slider-thumb { width: 14px; height: 20px; }
+  .geom-opacity::-moz-range-thumb { width: 14px; height: 20px; }
+
+  /* Modal — full-bleed on phone */
+  .modal-backdrop { padding: 8px; }
+  .modal {
+    max-width: 100%;
+    max-height: 96vh;
+    clip-path: none;
+  }
+  .modal-head { padding: 10px 14px; font-size: 11px; }
+  .modal-body { padding: 14px 16px; font-size: 13px; }
+  .setup-grid { grid-template-columns: 1fr; }
+  .setup-list {
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .setup-list button {
+    flex: 0 0 auto;
+    border-bottom: none;
+    border-right: 1px solid var(--line-soft);
+    padding: 10px 14px;
+  }
+  .setup-list button.active {
+    border-left: none;
+    border-bottom: 3px solid var(--accent-red);
+  }
+
+  /* Footer wraps, smaller text */
+  #strip4 {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 12px;
+    font-size: 8px;
+    gap: 4px;
+    justify-content: center;
+    text-align: center;
+  }
+  #strip4 > div { width: 100%; }
+}
+
+/* Very small phones — extra tight */
+@media (max-width: 380px) {
+  html, body { font-size: 12px; }
+  #strip0 .left, #strip0 .right { font-size: 8px; }
+  #strip1 .btn-row button { flex-basis: calc(50% - 4px); font-size: 10px; }
+  .viewer-toolbar { max-width: 110px; }
+  .viewer-toolbar button { font-size: 8px; padding: 4px 5px; }
+}
+</style>
+</head>
+<body data-theme="dark">
+
+<!-- ============== STRIP 0 ============== -->
+<header id="strip0">
+  <div class="left">
+    <span class="muted upper">Case ::</span>
+    <span id="zipNameTop" class="mono">— no file loaded —</span>
+    <span class="muted" style="margin-left:14px;">|</span>
+    <span class="muted upper" style="margin-left:14px;">Uploaded ::</span>
+    <span id="zipTimeTop" class="mono">—</span>
+  </div>
+  <div class="center"><span class="scan"></span>PROJECT OCV</div>
+  <div class="right">
+    <span class="muted" style="font-size:9px;letter-spacing:0.16em;">THEME</span>
+    <div class="theme-toggle" id="themeToggle">
+      <div data-mode="light">LT</div>
+      <div class="on" data-mode="dark">DK</div>
+    </div>
+  </div>
+</header>
+
+<!-- ============== STRIP 1 ============== -->
+<section id="strip1">
+  <div class="case-name">
+    <span class="muted upper" style="font-size:9px;letter-spacing:0.16em;">Active</span>
+    <b id="activeCase" class="mono" style="margin-left:6px;">none</b>
+  </div>
+  <div id="console"></div>
+  <div class="btn-row" style="justify-content:flex-end;">
+    <button id="btnUpload">Upload</button>
+    <input type="file" id="fileInput" accept=".zip">
+    <button id="btnValidate">Valid</button>
+    <button id="btnReset">Reset</button>
+    <button id="btnDemo">Demo</button>
+    <button id="btnSetup">Setup</button>
+  </div>
+</section>
+
+<!-- ============== STRIP 2 ============== -->
+<section id="strip2">
+  <div class="col" id="colLeft">
+    <div class="col-head">Geometry / Layers</div>
+    <div class="col-body" id="geomTree">
+      <div class="muted mono" style="font-size:10px;">Awaiting case…</div>
+    </div>
+  </div>
+  <div class="resizer" data-side="left"></div>
+
+  <div class="col" id="colCenter" style="background:var(--bg-deep);position:relative;padding:0;">
+    <div class="col-head">Viewport</div>
+    <div id="viewer-wrap">
+      <canvas id="viewer-canvas"></canvas>
+      <div class="viewer-toolbar">
+        <div class="group">
+          <span class="lbl">Tools</span>
+          <button data-tool="orbit" class="active">Orbit</button>
+          <button data-tool="pan">Pan</button>
+          <button data-tool="zoom">Zoom</button>
+        </div>
+        <div class="group">
+          <span class="lbl">Auto</span>
+          <button id="btnAutoRot">Auto-rotate</button>
+          <button id="btnReset3D">Reset View</button>
+          <button id="btnAxes" class="active">Axes ON</button>
+        </div>
+        <div class="group">
+          <span class="lbl">Camera</span>
+          <button data-cam="front">Front +X</button>
+          <button data-cam="side">Side +Y</button>
+          <button data-cam="top">Top +Z</button>
+          <button data-cam="iso">Isometric</button>
+          <button data-cam="persp" class="active">Perspective</button>
+        </div>
+        <div class="group">
+          <span class="lbl">Display</span>
+          <button data-disp="solid" class="active">Solid</button>
+          <button data-disp="wire">Wireframe</button>
+          <button data-disp="points">Points</button>
+          <button data-disp="overlay">Solid+Wire</button>
+        </div>
+      </div>
+      <div class="axis-label x" id="axL_X">X</div>
+      <div class="axis-label y" id="axL_Y">Y</div>
+      <div class="axis-label z" id="axL_Z">Z</div>
+      <div class="axis-label" id="axL_O" style="opacity:0.7;">0</div>
+      <div class="dim-label" id="dimX">L</div>
+      <div class="dim-label" id="dimY">W</div>
+      <div class="dim-label" id="dimZ">H</div>
+      <div class="viewer-tooltip" id="viewerTip">drag = orbit · shift+drag = pan · wheel = zoom</div>
+    </div>
+  </div>
+  <div class="resizer" data-side="right"></div>
+
+  <div class="col" id="colRight">
+    <div class="col-head">Properties / Display</div>
+    <div class="col-body">
+      <div class="prop-section">
+        <h4>Selection</h4>
+        <dl class="prop-grid" id="selProps">
+          <dt>name</dt><dd>—</dd>
+          <dt>verts</dt><dd>—</dd>
+          <dt>tris</dt><dd>—</dd>
+          <dt>bbox</dt><dd>—</dd>
+        </dl>
+      </div>
+      <div class="prop-section">
+        <h4>Scene</h4>
+        <dl class="prop-grid" id="sceneProps">
+          <dt>groups</dt><dd id="pGroups">0</dd>
+          <dt>verts</dt><dd id="pVerts">0</dd>
+          <dt>tris</dt><dd id="pTris">0</dd>
+          <dt>bbox X</dt><dd id="pBboxX">—</dd>
+          <dt>bbox Y</dt><dd id="pBboxY">—</dd>
+          <dt>bbox Z</dt><dd id="pBboxZ">—</dd>
+        </dl>
+      </div>
+      <div class="prop-section">
+        <h4>Display Options</h4>
+        <div class="toggle-grid">
+          <button id="dShowDom" class="active">Domain</button>
+          <button id="dShowInlet" class="active">Inlet ▶</button>
+          <button id="dShowGrid">Grid</button>
+          <button id="dShowRefBox">RefBox</button>
+        </div>
+      </div>
+      <div class="prop-section">
+        <h4>Telemetry</h4>
+        <div id="telemetry"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="hresize" id="hresize" title="drag to resize"></div>
+
+<!-- ============== STRIP 3 ============== -->
+<section id="strip3">
+  <div class="dash">
+    <section class="s-workflow">
+      <h3><span class="num">01</span>Workflow Pipeline</h3>
+      <div class="pipeline" id="pipeline"></div>
+    </section>
+
+    <section class="s-models">
+      <h3><span class="num">02</span>Turbulence · Time · Solver</h3>
+      <table class="kv" id="modelsTbl"></table>
+    </section>
+
+    <section class="s-equations">
+      <h3><span class="num">03</span>Governing Equations</h3>
+      <div id="eqnsBlock">
+        <div class="eqn"><span class="lbl">Continuity (incompressible)</span>∇ · U = 0</div>
+        <div class="eqn"><span class="lbl">Momentum (Navier-Stokes)</span>∂U/∂t + (U·∇)U = −∇p/ρ + ∇·(ν_eff (∇U + ∇U<sup>T</sup>))</div>
+        <div class="eqn"><span class="lbl">Turbulence (S-A DDES)</span>D ν̃ /Dt = c_b1 (1−f_t2) S̃ ν̃ − [c_w1 f_w − c_b1/κ² f_t2] (ν̃/d̃)² + (1/σ)[∇·((ν+ν̃)∇ν̃) + c_b2 (∇ν̃)²]</div>
+        <div class="eqn"><span class="lbl">DDES length scale</span>d̃ = d_w − f_d · max(0, d_w − C_DES · Δ),    Δ = (V_cell)<sup>1/3</sup></div>
+      </div>
+    </section>
+
+    <section class="s-bcs">
+      <h3><span class="num">04</span>Boundary Patches</h3>
+      <table class="kv" id="bcsTbl"></table>
+    </section>
+
+    <section class="s-params">
+      <h3><span class="num">05</span>Parameters · CFL</h3>
+      <table class="kv" id="paramsTbl"></table>
+    </section>
+
+    <section class="s-mesh">
+      <h3><span class="num">06</span>Mesh Setup · Refinement</h3>
+      <table class="kv" id="meshTbl"></table>
+    </section>
+
+    <section class="s-aero">
+      <h3><span class="num">07</span>Aerodynamics</h3>
+      <table class="kv" id="aeroTbl"></table>
+    </section>
+
+    <section class="s-init hidden">
+      <h3><span class="num">08</span>Initial Conditions</h3>
+      <table class="kv" id="initTbl"></table>
+    </section>
+
+    <section class="s-quality hidden">
+      <h3><span class="num">09</span>Mesh Quality (snappyHexMesh)</h3>
+      <table class="kv" id="qualityTbl"></table>
+    </section>
+
+    <section class="s-functions hidden">
+      <h3><span class="num">10</span>Function Objects</h3>
+      <div id="fnObjBlock"></div>
+    </section>
+
+    <section class="s-decomp hidden">
+      <h3><span class="num">11</span>Parallel Decomposition</h3>
+      <div id="decompBlock"></div>
+    </section>
+  </div>
+</section>
+
+<!-- ============== STRIP 4 ============== -->
+<footer id="strip4">
+  <div>OCV — OpenFOAM Case Viewer</div>
+  <div>Edition 0.0.5.X2 · 11 MAY 2026 · <a id="footerAbout" href="#about" class="brand-link">SHIBAYAMA MOTOR RACING</a></div>
+  <div>© Project OCV · MIT-style demo</div>
+</footer>
+
+<div id="drop-overlay"><div class="box">Drop .zip case</div></div>
+
+<!-- ============== ABOUT MODAL ============== -->
+<div class="modal-backdrop" id="modalAbout">
+  <div class="modal">
+    <div class="modal-head">
+      <span>About · Project OCV</span>
+      <button class="close-x" data-close="modalAbout">×</button>
+    </div>
+    <div class="modal-body" id="aboutBody"></div>
+  </div>
+</div>
+
+<!-- ============== SETUP MODAL ============== -->
+<div class="modal-backdrop" id="modalSetup">
+  <div class="modal" style="max-width: 760px;">
+    <div class="modal-head">
+      <span>Setup</span>
+      <button class="close-x" data-close="modalSetup">×</button>
+    </div>
+    <div class="modal-body" style="padding:0;">
+      <div class="setup-grid">
+        <div class="setup-list" id="setupList">
+          <button class="active" data-pane="theme">Color Theme</button>
+          <button data-pane="sections">Sections</button>
+          <button data-pane="tutorials">Tutorial Cases</button>
+          <button data-pane="info">Info</button>
+        </div>
+        <div class="setup-pane" id="setupPane"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- libraries -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+
+<script>
+/* =====================================================
+   OCV — OpenFOAM Case Viewer
+   Single-file MVP. Vanilla JS + three.js + JSZip + pako.
+   ===================================================== */
+
+// ----------- state -----------
+const STATE = {
+  caseName: null,
+  uploadedAt: null,
+  files: {},     // path -> string
+  parsed: null,  // dictionary of extracted parameters
+  obj: null,     // parsed obj { groups, verts }
+  isDemo: false
+};
+
+// ----------- console -----------
+function log(msg, level='info') {
+  const c = document.getElementById('console');
+  const ts = new Date().toLocaleTimeString('en-GB', { hour12:false });
+  const line = document.createElement('span');
+  line.className = 'log-line ' + (level==='warn'?'warn':level==='err'?'err':level==='ok'?'ok':'');
+  line.textContent = `[${ts}] ${msg}`;
+  c.prepend(line);
+  // keep last 30
+  while (c.children.length > 30) c.removeChild(c.lastChild);
+}
+
+// ----------- theme toggle (Strip 0 LT/DK) -----------
+// The 5 color themes are defined later. LT always means Blueprint; DK
+// means whichever dark theme the user last picked (defaults to default_dark).
+let lastDarkTheme = 'default_dark';
+document.getElementById('themeToggle').addEventListener('click', e => {
+  const tgt = e.target.closest('div[data-mode]');
+  if (!tgt) return;
+  const mode = tgt.dataset.mode;
+  if (typeof applyColorTheme === 'function') {
+    applyColorTheme(mode === 'light' ? 'blueprint' : (lastDarkTheme || 'default_dark'));
+  } else {
+    // fallback — only happens if the theme system hasn't loaded yet
+    document.body.dataset.theme = mode;
+    document.querySelectorAll('#themeToggle div').forEach(d => d.classList.toggle('on', d.dataset.mode===mode));
+    if (Viewer.scene) Viewer.applyTheme();
+  }
+});
+
+// ----------- column resize -----------
+(function setupResize() {
+  const grid = document.getElementById('strip2');
+  let dragging = null;
+  document.querySelectorAll('#strip2 .resizer').forEach(r => {
+    r.addEventListener('mousedown', e => {
+      dragging = { side: r.dataset.side, x: e.clientX, w: grid.getBoundingClientRect().width };
+      const cs = getComputedStyle(grid).gridTemplateColumns.split(' ').map(parseFloat);
+      dragging.cols = cs;
+      e.preventDefault();
+    });
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dx = e.clientX - dragging.x;
+    const total = dragging.w;
+    let [l, r1, c, r2, rt] = dragging.cols;
+    if (dragging.side === 'left') {
+      l = Math.max(80, Math.min(total*0.5, l + dx));
+      c = total - l - r1 - r2 - rt;
+    } else {
+      rt = Math.max(80, Math.min(total*0.5, rt - dx));
+      c = total - l - r1 - r2 - rt;
+    }
+    grid.style.gridTemplateColumns = `${l}px 8px ${c}px 8px ${rt}px`;
+    if (Viewer.onResize) Viewer.onResize();
+  });
+  document.addEventListener('mouseup', () => { dragging = null; });
+})();
+
+// horizontal resizer between Strip 2 and Strip 3
+(function setupStrip3Resize() {
+  const handle = document.getElementById('hresize');
+  if (!handle) return;
+  let dragging = false, startY = 0, startH = 280;
+  handle.addEventListener('mousedown', e => {
+    dragging = true;
+    startY = e.clientY;
+    const cs = getComputedStyle(document.body).getPropertyValue('--s3h').trim();
+    startH = parseFloat(cs) || 280;
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const dy = e.clientY - startY;
+    // dragging up → larger Strip 3; dragging down → smaller
+    const newH = Math.max(60, Math.min(window.innerHeight - 200, startH - dy));
+    document.body.style.setProperty('--s3h', newH + 'px');
+    if (Viewer.onResize) Viewer.onResize();
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; document.body.style.userSelect = ''; }
+  });
+})();
+
+// ----------- buttons -----------
+document.getElementById('btnUpload').addEventListener('click', () => document.getElementById('fileInput').click());
+document.getElementById('fileInput').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) loadZipFile(f, false);
+});
+document.getElementById('btnReset').addEventListener('click', resetAll);
+document.getElementById('btnDemo').addEventListener('click', loadDemo);
+document.getElementById('btnValidate').addEventListener('click', validate);
+
+// ----------- drop zone -----------
+const overlay = document.getElementById('drop-overlay');
+window.addEventListener('dragenter', e => { e.preventDefault(); overlay.classList.add('show'); });
+overlay.addEventListener('dragover', e => e.preventDefault());
+overlay.addEventListener('dragleave', e => { if (e.target === overlay) overlay.classList.remove('show'); });
+overlay.addEventListener('drop', e => {
+  e.preventDefault();
+  overlay.classList.remove('show');
+  const f = e.dataTransfer.files[0];
+  if (f && f.name.toLowerCase().endsWith('.zip')) loadZipFile(f, false);
+  else log('Drop a .zip OpenFOAM case', 'warn');
+});
+
+// ----------- zip ingest -----------
+async function loadZipFile(file, isDemo) {
+  log(`Reading ${file.name} (${(file.size/1024/1024).toFixed(2)} MB)…`);
+  const buf = await file.arrayBuffer();
+  try {
+    const zip = await JSZip.loadAsync(buf);
+    STATE.files = {};
+    STATE.caseName = isDemo ? 'demo case' : file.name.replace(/\.zip$/i,'');
+    STATE.uploadedAt = new Date();
+    STATE.isDemo = isDemo;
+
+    const entries = Object.values(zip.files).filter(f => !f.dir);
+    log(`${entries.length} entries in archive`);
+
+    // collect text dicts + obj
+    let objText = null, objName = null;
+    for (const entry of entries) {
+      const n = entry.name;
+      if (/\.(obj)(\.gz)?$/i.test(n)) {
+        log(`Decoding geometry ${n}…`);
+        const data = await entry.async('uint8array');
+        try {
+          if (n.endsWith('.gz')) {
+            const txt = pako.inflate(data, { to: 'string' });
+            objText = txt; objName = n;
+          } else {
+            objText = new TextDecoder().decode(data);
+            objName = n;
+          }
+        } catch (err) {
+          log('OBJ decode failed: ' + err.message, 'err');
+        }
+      } else if (/(controlDict|fvSchemes|fvSolution|momentumTransport|transportProperties|blockMeshDict|snappyHexMeshDict|decomposeParDict|forceCoeffs|cuttingPlane|streamLines|initialConditions|fixedInlet)$/i.test(n.split('/').pop())
+                 || /\/0\/(U|p|k|nut|nuTilda|omega)$/.test(n)) {
+        const txt = await entry.async('string');
+        STATE.files[n] = txt;
+      }
+    }
+
+    log(`Parsed ${Object.keys(STATE.files).length} dictionaries`, 'ok');
+
+    STATE.parsed = parseAll(STATE.files);
+    if (objText) {
+      log(`Parsing OBJ (${(objText.length/1024/1024).toFixed(1)} MB) …`);
+      STATE.obj = parseOBJ(objText);
+      log(`OBJ: ${Object.keys(STATE.obj.groups).length} named groups, ${STATE.obj.verts.length.toLocaleString()} verts`, 'ok');
+    } else {
+      STATE.obj = null;
+      log('No .obj geometry inside zip', 'warn');
+    }
+
+    refreshUI();
+    log('Case ready', 'ok');
+  } catch (err) {
+    log('Zip load failed: ' + err.message, 'err');
+    console.error(err);
+  }
+}
+
+function resetAll() {
+  // 1. case state
+  STATE.caseName = null;
+  STATE.uploadedAt = null;
+  STATE.files = {};
+  STATE.parsed = null;
+  STATE.obj = null;
+  STATE.isDemo = false;
+  // 2. strips
+  document.getElementById('zipNameTop').textContent = '— no file loaded —';
+  document.getElementById('zipTimeTop').textContent = '—';
+  document.getElementById('activeCase').textContent = 'none';
+  document.getElementById('geomTree').innerHTML = '<div class="muted mono" style="font-size:10px;">Awaiting case…</div>';
+  document.getElementById('console').innerHTML = '';
+  ['modelsTbl','paramsTbl','meshTbl','aeroTbl','bcsTbl'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+  document.getElementById('pipeline').innerHTML = '';
+  // 3. layout — Strip 3 height back to default
+  document.body.style.removeProperty('--s3h');
+  // 4. theme back to dark default
+  document.body.dataset.theme = 'dark';
+  document.querySelectorAll('#themeToggle div').forEach(d => d.classList.toggle('on', d.dataset.mode === 'dark'));
+  // 5. viewer scene + camera + flags
+  Viewer.clear();
+  Viewer.autoRot = false;
+  Viewer.tool = 'orbit';
+  Viewer.displayMode = 'solid';
+  Viewer.selected = null;
+  if (Viewer.axes) Viewer.axes.visible = true;
+  Viewer.resetView();
+  Viewer.applyTheme();
+  // 6. toolbar button states
+  const setActive = (sel, attr, val) => {
+    document.querySelectorAll(sel).forEach(b => b.classList.toggle('active', b.dataset[attr] === val));
+  };
+  setActive('.viewer-toolbar [data-tool]', 'tool', 'orbit');
+  setActive('.viewer-toolbar [data-cam]',  'cam',  'persp');
+  setActive('.viewer-toolbar [data-disp]', 'disp', 'solid');
+  const btnAR = document.getElementById('btnAutoRot');   if (btnAR) btnAR.classList.remove('active');
+  const btnAx = document.getElementById('btnAxes');
+  if (btnAx) { btnAx.classList.add('active'); btnAx.textContent = 'Axes ON'; }
+  // 7. display option toggles back to factory
+  const dDef = { dShowDom:true, dShowInlet:true, dShowGrid:false, dShowRefBox:false };
+  for (const id in dDef) {
+    const b = document.getElementById(id); if (b) b.classList.toggle('active', dDef[id]);
+  }
+  // 8. selection panel
+  const sp = document.getElementById('selProps');
+  if (sp) sp.innerHTML = '<dt>name</dt><dd>—</dd><dt>verts</dt><dd>—</dd><dt>tris</dt><dd>—</dd><dt>bbox</dt><dd>—</dd>';
+  ['pGroups','pVerts','pTris','pBboxX','pBboxY','pBboxZ'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.textContent = id.startsWith('pBbox') ? '—' : '0';
+  });
+  log('Reset — defaults restored', 'ok');
+}
+
+function validate() {
+  if (!STATE.parsed) { log('Nothing to validate — load a case first','warn'); return; }
+  const p = STATE.parsed;
+  const checks = [];
+  // Section A — required dictionary keys present
+  checks.push(['controlDict.application', !!p.application, p.application||'missing']);
+  checks.push(['nu (transport / physical)', !!p.nu, p.nu!=null?`${p.nu.toExponential(2)} m²/s`:'missing']);
+  checks.push(['momentumTransport.simulationType', !!p.simulationType, p.simulationType||'missing']);
+  checks.push(['blockMeshDict vertices', !!p.domain, p.domain ? `${p.domain.size.x}×${p.domain.size.y}×${p.domain.size.z} m` : 'missing']);
+  checks.push(['snappyHexMesh refinement', !!p.refSurface, p.refSurface ? `(${p.refSurface.min},${p.refSurface.max})` : 'missing']);
+  checks.push(['inlet U', !!p.inletU, p.inletU? `(${p.inletU.join(' ')})`:'missing']);
+  // Section B — academic-paper-grounded vehicle CFD rules (Chien & Wang 2024)
+  if (p.Uref) {
+    const Ma = p.Uref / 340;
+    checks.push(['Mach < 0.3 (incompressible OK)', Ma < 0.3, `Ma=${Ma.toFixed(3)}`]);
+  }
+  if (p.cflWake!=null) {
+    checks.push(['CFL_wake plausible (<5)', p.cflWake < 5, `CFL_wake=${p.cflWake.toFixed(2)}`]);
+  }
+  if (p.cflSurface!=null && p.simulationType === 'LES') {
+    // LES typically wants surface CFL <~10 with implicit PISO; warn above 20
+    checks.push(['CFL_surface (LES, implicit) reasonable', p.cflSurface < 20, `CFL_surface=${p.cflSurface.toFixed(1)}`]);
+  }
+  if (p.refSurface) {
+    // Paper recommends finer wall mesh for LES (y+<1); levels 9-10 typical
+    if (p.simulationType === 'LES') {
+      checks.push(['LES surface refinement ≥ 9', p.refSurface.max >= 9, `lvl ${p.refSurface.min}-${p.refSurface.max}`]);
+    } else {
+      checks.push(['RANS surface refinement ≥ 5', p.refSurface.max >= 5, `lvl ${p.refSurface.min}-${p.refSurface.max}`]);
+    }
+  }
+  if (p.domain && p.refBox) {
+    // Refinement box should sit fully inside domain
+    const inDom = p.refBox.min.x >= p.domain.min.x && p.refBox.max.x <= p.domain.max.x &&
+                  p.refBox.min.y >= p.domain.min.y && p.refBox.max.y <= p.domain.max.y &&
+                  p.refBox.min.z >= p.domain.min.z && p.refBox.max.z <= p.domain.max.z;
+    checks.push(['refinementBox inside domain', inDom, inDom?'ok':'overflow']);
+  }
+  if (p.lRef && p.Aref && p.domain) {
+    // Blockage ratio < 5% is a common wind-tunnel guideline
+    const front = p.domain.size.y * p.domain.size.z;     // half-domain (sym plane)
+    const blockage = p.Aref / (front * 2);                 // approximate
+    checks.push(['blockage ratio < 0.05', blockage < 0.05, `${(blockage*100).toFixed(2)}%`]);
+  }
+  if (p.bmPatches && p.uBC) {
+    // Every blockMesh patch must have a U BC defined
+    const missing = p.bmPatches.filter(pp => !(pp.name in p.uBC));
+    checks.push(['every patch has U BC', missing.length === 0, missing.length ? `missing on ${missing.map(m=>m.name).join(', ')}` : 'all covered']);
+  }
+  if (p.simulationType === 'LES' && p.divU) {
+    // Paper uses "Gauss linear" or LUST for LES convection — warn if upwind
+    const upwind = /upwind/i.test(p.divU) && !/LUST|linear/i.test(p.divU);
+    checks.push(['LES uses LUST/linear (not pure upwind)', !upwind, p.divU]);
+  }
+  if (p.nCorrectors!=null && p.simulationType === 'LES') {
+    checks.push(['PISO nCorrectors ≥ 2 (LES)', p.nCorrectors >= 2, `n=${p.nCorrectors}`]);
+  }
+  let pass = 0, warns = 0;
+  for (const [name, ok, val] of checks) {
+    log(`${ok?'OK  ':'!!  '}${name}: ${val}`, ok?'ok':'warn');
+    if (ok) pass++; else warns++;
+  }
+  log(`Validation: ${pass}/${checks.length} passed (${warns} warning${warns===1?'':'s'})`, warns===0?'ok':'warn');
+  log('Rules informed by Chien & Wang 2024 (doi:10.1093/jom/ufae025) — see About', 'ok');
+}
+
+// ----------- OpenFOAM dict parsing -----------
+function stripComments(t) {
+  return t
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/.*$/gm, ' ');
+}
+
+function findKey(text, key) {
+  const t = stripComments(text);
+  const re = new RegExp('(?:^|\\s)' + key.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\s+([^;{]+);');
+  const m = t.match(re);
+  return m ? m[1].trim() : null;
+}
+
+function findVecList(text, key) {
+  // returns string content inside (...)
+  const t = stripComments(text);
+  const re = new RegExp(key + '\\s*\\(([\\s\\S]*?)\\)');
+  const m = t.match(re);
+  return m ? m[1].trim() : null;
+}
+
+function findBlock(text, key) {
+  const t = stripComments(text);
+  const idx = t.search(new RegExp('(^|\\s)' + key + '\\s*\\{'));
+  if (idx < 0) return null;
+  const start = t.indexOf('{', idx);
+  let depth = 0, i = start;
+  for (; i < t.length; i++) {
+    if (t[i] === '{') depth++;
+    else if (t[i] === '}') { depth--; if (depth===0) { i++; break; } }
+  }
+  return t.slice(start+1, i-1);
+}
+
+function findFile(files, basename) {
+  for (const k in files) if (k.split('/').pop() === basename) return files[k];
+  return null;
+}
+
+// Locate the body of a parenthesised list anchored by `keyword` — walks
+// balanced parentheses so nested `faces (...)` lists do not cut it short.
+function extractParenList(text, keyword) {
+  const t = stripComments(text);
+  const re = new RegExp('(?:^|\\s)' + keyword + '\\s*\\(', 'g');
+  const m = re.exec(t);
+  if (!m) return null;
+  let i = m.index + m[0].length; // just past the opening (
+  let depth = 1;
+  const start = i;
+  while (i < t.length && depth) {
+    if (t[i] === '(') depth++;
+    else if (t[i] === ')') { depth--; if (depth === 0) break; }
+    i++;
+  }
+  return t.slice(start, i);
+}
+
+// Parse `name { type X; ... }` patch entries inside a (already-extracted)
+// boundary-list body, walking balanced braces so the nested `faces (...)`
+// is ignored.
+function parsePatchBlocks(inner) {
+  const out = [];
+  let i = 0;
+  while (i < inner.length) {
+    while (i < inner.length && /\s/.test(inner[i])) i++;
+    if (i >= inner.length) break;
+    // a numeric token (polyMesh count) or stray comma — skip until next identifier
+    if (!/[A-Za-z_]/.test(inner[i])) { i++; continue; }
+    let name = '';
+    while (i < inner.length && /[\w.\-]/.test(inner[i])) name += inner[i++];
+    while (i < inner.length && /\s/.test(inner[i])) i++;
+    if (inner[i] !== '{') continue;
+    let depth = 1, body = '';
+    i++;
+    while (i < inner.length && depth) {
+      if (inner[i] === '{') depth++;
+      else if (inner[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+      body += inner[i++];
+    }
+    const tm = body.match(/\btype\s+(\w+)\s*;/);
+    if (tm && name) out.push({ name, type: tm[1] });
+  }
+  return out;
+}
+
+// Parse a `boundary ( ... );` list (blockMeshDict) or polyMesh/boundary.
+function parseBoundaryList(text) {
+  // explicit boundary keyword (blockMeshDict)
+  let inner = extractParenList(text, 'boundary');
+  if (inner) return parsePatchBlocks(inner);
+  // polyMesh/boundary: top-level "<N> ( ... )" — find the outer-most ( and walk
+  const t = stripComments(text);
+  const m = t.match(/\b\d+\s*\(/);
+  if (!m) return [];
+  let i = m.index + m[0].length, depth = 1, start = i;
+  while (i < t.length && depth) {
+    if (t[i] === '(') depth++;
+    else if (t[i] === ')') { depth--; if (depth === 0) break; }
+    i++;
+  }
+  return parsePatchBlocks(t.slice(start, i));
+}
+
+// Parse the boundaryField block of a 0/* dict and return { patchName: bcType }.
+function parseBoundaryFieldTypes(text) {
+  const blk = findBlock(text, 'boundaryField');
+  if (!blk) return {};
+  const out = {};
+  // Patch entries can be quoted ("motorBike_.*"). Walk balanced braces.
+  let i = 0;
+  while (i < blk.length) {
+    // skip whitespace
+    while (i < blk.length && /\s/.test(blk[i])) i++;
+    if (i >= blk.length) break;
+    // read name (possibly quoted)
+    let name = '';
+    if (blk[i] === '"') {
+      i++;
+      while (i < blk.length && blk[i] !== '"') name += blk[i++];
+      i++;
+    } else {
+      while (i < blk.length && /[\w.\-*()|]/.test(blk[i])) name += blk[i++];
+    }
+    if (!name) { i++; continue; }
+    // skip whitespace then expect {
+    while (i < blk.length && /\s/.test(blk[i])) i++;
+    if (blk[i] !== '{') { i++; continue; }
+    // walk balanced braces
+    let depth = 1, body = '';
+    i++;
+    while (i < blk.length && depth) {
+      if (blk[i] === '{') depth++;
+      else if (blk[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+      body += blk[i++];
+    }
+    const tm = body.match(/\btype\s+(\w+)\s*;/);
+    if (tm) out[name] = tm[1];
+  }
+  return out;
+}
+
+function parseAll(files) {
+  const out = {};
+
+  // controlDict — RANS stage (used for application)
+  const cd = findFile(files, 'controlDict');
+  if (cd) {
+    out.application = findKey(cd, 'application');
+    // OF12 uses `application foamRun;` plus `solver incompressibleFluid;` —
+    // surface the real solver name when application is the launcher.
+    const solver = findKey(cd, 'solver');
+    if (solver && (out.application === 'foamRun' || out.application === 'foamMultiRun')) {
+      out.application = `${out.application} (${solver})`;
+      out.solverModule = solver;
+    }
+    out.deltaT = parseFloat(findKey(cd, 'deltaT'));
+    out.endTime = parseFloat(findKey(cd, 'endTime'));
+    out.startTime = parseFloat(findKey(cd, 'startTime'));
+    out.writeInterval = parseFloat(findKey(cd, 'writeInterval'));
+  }
+  // LES controlDict (lesFiles/controlDict) — overrides if present
+  const lesCd = files['LES_RL9-10_v100ms/lesFiles/controlDict']
+              || Object.entries(files).find(([k]) => k.includes('lesFiles/controlDict'))?.[1];
+  if (lesCd) {
+    out.lesApplication = findKey(lesCd, 'application');
+    out.lesDeltaT = parseFloat(findKey(lesCd, 'deltaT'));
+    out.lesEndTime = parseFloat(findKey(lesCd, 'endTime'));
+  }
+
+  // transportProperties (OF ≤ 11) OR physicalProperties (OF 12+)
+  const tp = findFile(files, 'transportProperties') || findFile(files, 'physicalProperties');
+  if (tp) {
+    const m = tp.match(/nu\s+\[[^\]]*\]\s+([0-9.eE+\-]+)/);
+    if (m) out.nu = parseFloat(m[1]);
+    // also handle OF12 form: `nu  1.5e-05;` without dimensions
+    if (!out.nu) {
+      const m2 = tp.match(/(?:^|\s)nu\s+([0-9.eE+\-]+)\s*;/);
+      if (m2) out.nu = parseFloat(m2[1]);
+    }
+  }
+
+  // momentumTransport — prefer LES file
+  const lesMt = Object.entries(files).find(([k]) => k.includes('lesFiles/momentumTransport'))?.[1];
+  const ransMt = findFile(files, 'momentumTransport');
+  const mt = lesMt || ransMt;
+  if (mt) {
+    out.simulationType = findKey(mt, 'simulationType');
+    if (out.simulationType === 'LES') {
+      const lesBlk = findBlock(mt, 'LES');
+      if (lesBlk) {
+        out.lesModel = findKey(lesBlk, 'model');
+        out.lesDelta = findKey(lesBlk, 'delta');
+      }
+    } else {
+      const rasBlk = findBlock(mt, 'RAS');
+      if (rasBlk) out.rasModel = findKey(rasBlk, 'model');
+    }
+  }
+  if (ransMt && ransMt !== mt) {
+    const rasBlk = findBlock(ransMt, 'RAS');
+    if (rasBlk) out.rasModel = findKey(rasBlk, 'model');
+  }
+
+  // 0/U — inlet velocity
+  // OF12's RANS tutorial ships 0/U.orig (Allrun copies it to 0/U).
+  // Fall back to U.orig so OCV can read inlet U + boundaryField even on a
+  // case that hasn't been Allrun'd.
+  const Ufile = findFile(files, 'U') || findFile(files, 'U.orig');
+  if (Ufile) {
+    const m = Ufile.match(/internalField\s+uniform\s+\(([^)]+)\)/);
+    if (m) out.inletU = m[1].trim().split(/\s+/).map(Number);
+    const fv = Ufile.match(/flowVelocity\s+\(([^)]+)\)/);
+    if (fv) out.flowVelocity = fv[1].trim().split(/\s+/).map(Number);
+  }
+
+  // initialConditions
+  const ic = findFile(files, 'initialConditions');
+  if (ic) {
+    const k = ic.match(/turbulentKE\s+([0-9.eE+\-]+)/);
+    if (k) out.turbKE = parseFloat(k[1]);
+    const w = ic.match(/turbulentOmega\s+([0-9.eE+\-]+)/);
+    if (w) out.turbOmega = parseFloat(w[1]);
+  }
+
+  // blockMeshDict — vertices + cell counts
+  const bm = findFile(files, 'blockMeshDict');
+  if (bm) {
+    const verts = [];
+    const reV = /\(\s*(-?[\d.eE+\-]+)\s+(-?[\d.eE+\-]+)\s+(-?[\d.eE+\-]+)\s*\)/g;
+    const vBlock = bm.match(/vertices\s*\(([\s\S]*?)\)\s*;/);
+    if (vBlock) {
+      let m;
+      while ((m = reV.exec(vBlock[1])) !== null) verts.push([+m[1], +m[2], +m[3]]);
+    }
+    if (verts.length >= 8) {
+      const xs = verts.map(v=>v[0]), ys = verts.map(v=>v[1]), zs = verts.map(v=>v[2]);
+      out.domain = {
+        min: { x: Math.min(...xs), y: Math.min(...ys), z: Math.min(...zs) },
+        max: { x: Math.max(...xs), y: Math.max(...ys), z: Math.max(...zs) }
+      };
+      out.domain.size = {
+        x: out.domain.max.x - out.domain.min.x,
+        y: out.domain.max.y - out.domain.min.y,
+        z: out.domain.max.z - out.domain.min.z
+      };
+    }
+    const blk = bm.match(/hex\s*\([^)]*\)\s*\((\d+)\s+(\d+)\s+(\d+)\)/);
+    if (blk) out.cells = { x:+blk[1], y:+blk[2], z:+blk[3] };
+    out.bmPatches = parseBoundaryList(bm);
+  }
+
+  // boundary file from polyMesh (if mesh is shipped) — supplements blockMesh patches
+  const polyB = Object.entries(files).find(([k]) => /polyMesh\/boundary$/.test(k))?.[1];
+  if (polyB) {
+    out.polyPatches = parseBoundaryList(polyB);
+  }
+
+  // U boundaryField — gives us BC types per patch (incl. wildcard patches like motorBike_.*)
+  if (Ufile) {
+    out.uBC = parseBoundaryFieldTypes(Ufile);
+  }
+
+  // snappyHexMesh
+  const sh = findFile(files, 'snappyHexMeshDict');
+  if (sh) {
+    const surf = sh.match(/motorBike\s*\{[^}]*level\s*\(\s*(\d+)\s+(\d+)\s*\)/);
+    if (surf) out.refSurface = { name:'motorBike', min:+surf[1], max:+surf[2] };
+    const reg = sh.match(/refinementBox\s*\{[^}]*levels\s*\(\s*\(\s*[^\s]+\s+(\d+)\s*\)\s*\)/);
+    if (reg) out.refRegion = { name:'refinementBox', level:+reg[1] };
+    const rb = sh.match(/refinementBox[\s\S]*?min\s*\(\s*([\-\d.\s]+?)\)\s*;[\s\S]*?max\s*\(\s*([\-\d.\s]+?)\)/);
+    if (rb) {
+      const mn = rb[1].trim().split(/\s+/).map(Number);
+      const mx = rb[2].trim().split(/\s+/).map(Number);
+      out.refBox = { min:{x:mn[0],y:mn[1],z:mn[2]}, max:{x:mx[0],y:mx[1],z:mx[2]} };
+    }
+    out.maxGlobalCells = parseFloat(findKey(sh, 'maxGlobalCells'));
+    // mesh quality controls — mostly thresholds
+    const mqc = findBlock(sh, 'meshQualityControls');
+    if (mqc) {
+      out.meshQuality = {
+        maxNonOrtho: findKey(mqc, 'maxNonOrtho'),
+        maxBoundarySkewness: findKey(mqc, 'maxBoundarySkewness'),
+        maxInternalSkewness: findKey(mqc, 'maxInternalSkewness'),
+        maxConcave: findKey(mqc, 'maxConcave'),
+        minVol: findKey(mqc, 'minVol'),
+        minTetQuality: findKey(mqc, 'minTetQuality'),
+        minFaceWeight: findKey(mqc, 'minFaceWeight'),
+        minVolRatio: findKey(mqc, 'minVolRatio'),
+        minTwist: findKey(mqc, 'minTwist'),
+        minDeterminant: findKey(mqc, 'minDeterminant'),
+        nSmoothScale: findKey(mqc, 'nSmoothScale'),
+        errorReduction: findKey(mqc, 'errorReduction')
+      };
+    }
+  }
+
+  // function objects from controlDict — list the names of any functions block
+  if (cd) {
+    const fnBlock = findBlock(cd, 'functions');
+    if (fnBlock) {
+      // each top-level identifier { ... } inside is a function object
+      const found = [];
+      const re = /([A-Za-z_][\w]*)\s*\{/g;
+      // walk balanced braces to skip nested
+      let i = 0;
+      while (i < fnBlock.length) {
+        while (i < fnBlock.length && /\s/.test(fnBlock[i])) i++;
+        if (i >= fnBlock.length) break;
+        // try to match an identifier directly followed by {
+        const m = /^([A-Za-z_][\w]*)\s*\{/.exec(fnBlock.slice(i));
+        if (m) {
+          const name = m[1];
+          i += m[0].length;
+          let depth = 1, body = '';
+          while (i < fnBlock.length && depth) {
+            if (fnBlock[i] === '{') depth++;
+            else if (fnBlock[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+            body += fnBlock[i++];
+          }
+          const tm = body.match(/\btype\s+(\w+)\s*;/);
+          found.push({ name, type: tm ? tm[1] : '?' });
+        } else {
+          i++;
+        }
+      }
+      // also catch #include directives, which are common
+      const incs = (cd.match(/#include\s+"([^"]+)"/g) || []).map(s => s.replace(/#include\s+"/, '').replace(/"$/, ''));
+      out.functions = found;
+      out.functionIncludes = incs;
+    }
+  }
+
+  // decomposeParDict — OF ≤11 uses `method`, OF 12 uses `decomposer`
+  const dp = Object.entries(files).find(([k]) => /decomposeParDict/.test(k))?.[1];
+  if (dp) {
+    out.nProcs = parseInt(findKey(dp, 'numberOfSubdomains'));
+    out.decompMethod = findKey(dp, 'method') || findKey(dp, 'decomposer');
+    out.decompDistributor = findKey(dp, 'distributor');
+  }
+
+  // forceCoeffs — OF ≤11 has flat keys, OF 12 wraps in forceCoeffs1 sub-dict.
+  const fc = findFile(files, 'forceCoeffs');
+  if (fc) {
+    // Try the OF12 wrapper first; fall back to flat OF11 layout.
+    const inner = findBlock(fc, 'forceCoeffs1') || findBlock(fc, 'forceCoeffs') || fc;
+    out.lRef = parseFloat(findKey(inner, 'lRef'));
+    out.Aref = parseFloat(findKey(inner, 'Aref'));
+    out.magUInf = parseFloat(findKey(inner, 'magUInf'));
+    out.rhoInf = parseFloat(findKey(inner, 'rhoInf'));
+    const ld = inner.match(/liftDir\s+\(([^)]+)\)/); if (ld) out.liftDir = ld[1].trim().split(/\s+/).map(Number);
+    const dd = inner.match(/dragDir\s+\(([^)]+)\)/); if (dd) out.dragDir = dd[1].trim().split(/\s+/).map(Number);
+    const pa = inner.match(/pitchAxis\s+\(([^)]+)\)/); if (pa) out.pitchAxis = pa[1].trim().split(/\s+/).map(Number);
+  }
+
+  // fvSchemes (LES preferred)
+  const lesFv = Object.entries(files).find(([k]) => k.includes('lesFiles/fvSchemes'))?.[1];
+  const ransFv = findFile(files, 'fvSchemes');
+  const fv = lesFv || ransFv;
+  if (fv) {
+    out.ddtScheme = findKey(findBlock(fv,'ddtSchemes')||'', 'default');
+    const div = findBlock(fv,'divSchemes') || '';
+    out.divU = findKey(div, 'div\\(phi,U\\)');
+    out.lapScheme = findKey(findBlock(fv,'laplacianSchemes')||'', 'default');
+  }
+
+  // fvSolution (LES preferred)
+  const lesFs = Object.entries(files).find(([k]) => k.includes('lesFiles/fvSolution'))?.[1];
+  const ransFs = findFile(files, 'fvSolution');
+  const fs = lesFs || ransFs;
+  if (fs) {
+    const piso = findBlock(fs, 'PISO');
+    if (piso) out.nCorrectors = parseInt(findKey(piso, 'nCorrectors'));
+    const simple = findBlock(fs, 'SIMPLE');
+    if (simple) out.nNonOrthCorr = parseInt(findKey(simple, 'nNonOrthogonalCorrectors'));
+  }
+
+  // ----- derived quantities -----
+  if (out.domain && out.cells) {
+    out.baseCell = {
+      x: out.domain.size.x / out.cells.x,
+      y: out.domain.size.y / out.cells.y,
+      z: out.domain.size.z / out.cells.z
+    };
+  }
+  if (out.baseCell && out.refSurface) {
+    out.cellAtMin = (Math.min(out.baseCell.x, out.baseCell.y, out.baseCell.z)) / Math.pow(2, out.refSurface.min);
+    out.cellAtMax = (Math.min(out.baseCell.x, out.baseCell.y, out.baseCell.z)) / Math.pow(2, out.refSurface.max);
+  }
+  if (out.baseCell && out.refRegion) {
+    out.cellAtWake = (Math.min(out.baseCell.x, out.baseCell.y, out.baseCell.z)) / Math.pow(2, out.refRegion.level);
+  }
+  // Reynolds
+  const Uref = out.magUInf || (out.flowVelocity ? Math.hypot(...out.flowVelocity) : (out.inletU?Math.hypot(...out.inletU):null));
+  out.Uref = Uref;
+  if (Uref && out.lRef && out.nu) out.Re = Uref * out.lRef / out.nu;
+  // CFL estimates
+  const dt = out.lesDeltaT || out.deltaT;
+  out.lesDt = dt;
+  if (dt && Uref && out.cellAtWake) out.cflWake = Uref * dt / out.cellAtWake;
+  if (dt && Uref && out.cellAtMax) out.cflSurface = Uref * dt / out.cellAtMax;
+
+  return out;
+}
+
+// ----------- OBJ parsing -----------
+function parseOBJ(text) {
+  const verts = [];
+  const groups = {};   // name -> { faces: [[i,i,i]] }
+  let current = 'default';
+  groups[current] = { faces: [] };
+  const lines = text.split('\n');
+  for (let li=0; li<lines.length; li++) {
+    const line = lines[li];
+    if (line.length < 2) continue;
+    const c = line.charCodeAt(0);
+    if (c === 118 && line.charCodeAt(1) === 32) {       // 'v '
+      const p = line.split(/\s+/);
+      verts.push([+p[1], +p[2], +p[3]]);
+    } else if (c === 103 && line.charCodeAt(1) === 32) { // 'g '
+      current = line.slice(2).trim() || 'default';
+      if (!groups[current]) groups[current] = { faces: [] };
+    } else if (c === 111 && line.charCodeAt(1) === 32) { // 'o '
+      current = line.slice(2).trim() || 'default';
+      if (!groups[current]) groups[current] = { faces: [] };
+    } else if (c === 102 && line.charCodeAt(1) === 32) { // 'f '
+      const parts = line.split(/\s+/);
+      const idx = [];
+      for (let i=1; i<parts.length; i++) {
+        const s = parts[i];
+        if (!s) continue;
+        const v = parseInt(s.split('/')[0], 10);
+        if (!isNaN(v)) idx.push(v - 1);
+      }
+      // triangulate
+      const arr = groups[current].faces;
+      for (let i=1; i<idx.length-1; i++) arr.push([idx[0], idx[i], idx[i+1]]);
+    }
+  }
+  return { verts, groups };
+}
+
+// ----------- 3D viewer -----------
+const Viewer = {
+  scene: null, camera: null, renderer: null, controls: null,
+  meshes: {},   // groupName -> { mesh, edges, points, color }
+  domainBox: null, inletArrows: null, axes: null, ground: null, refBox: null, grid: null,
+  selected: null,
+  autoRot: false,
+  displayMode: 'solid',
+  init() {
+    const wrap = document.getElementById('viewer-wrap');
+    const canvas = document.getElementById('viewer-canvas');
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.01, 5000);
+    this.camera.position.set(20, -20, 12);
+    this.camera.up.set(0,0,1);
+    this.applyTheme();
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const dl = new THREE.DirectionalLight(0xffffff, 0.7);
+    dl.position.set(5, -10, 8);
+    this.scene.add(dl);
+    const dl2 = new THREE.DirectionalLight(0xffffff, 0.35);
+    dl2.position.set(-8, 5, -3);
+    this.scene.add(dl2);
+    // axes
+    this.axisLen = 2.5;
+    this.axes = makeAxes(this.axisLen);
+    this.scene.add(this.axes);
+    // raycaster for selection
+    this.ray = new THREE.Raycaster();
+    canvas.addEventListener('click', e => this.onClick(e));
+    // orbit controls (basic implementation)
+    this.installControls(canvas);
+    this.onResize();
+    window.addEventListener('resize', () => this.onResize());
+    // catch every layout change — column drags, Strip 3 height drag, font reflow
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => this.onResize());
+      ro.observe(document.getElementById('viewer-wrap'));
+    }
+    this.autoRotSpeed = 0.0032;        // v2.1.0 — slowed by 20 %
+    const tick = () => {
+      requestAnimationFrame(tick);
+      if (this.autoRot) this.azimuth += (this.autoRotSpeed || 0.0032);
+      this.updateCam();
+      this.renderer.render(this.scene, this.camera);
+      this.updateAxisLabels();
+    };
+    tick();
+  },
+  updateAxisLabels() {
+    const wrap = document.getElementById('viewer-wrap');
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    const lX = document.getElementById('axL_X');
+    const lY = document.getElementById('axL_Y');
+    const lZ = document.getElementById('axL_Z');
+    const lO = document.getElementById('axL_O');
+    const visible = this.axes && this.axes.visible;
+    [lX,lY,lZ,lO].forEach(el => { if (el) el.style.display = visible ? 'block' : 'none'; });
+    if (visible) {
+      const L = this.axisLen || 2.5;
+      const pts = [
+        { el: lX, v: new THREE.Vector3(L*1.08, 0, 0) },
+        { el: lY, v: new THREE.Vector3(0, L*1.08, 0) },
+        { el: lZ, v: new THREE.Vector3(0, 0, L*1.08) },
+        { el: lO, v: new THREE.Vector3(0, 0, 0) }
+      ];
+      for (const p of pts) {
+        const v = p.v.clone().project(this.camera);
+        const onScreen = v.z < 1 && v.x > -1.05 && v.x < 1.05 && v.y > -1.05 && v.y < 1.05;
+        p.el.style.opacity = onScreen ? (p.el.id === 'axL_O' ? '0.6' : '1') : '0';
+        const sx = (v.x * 0.5 + 0.5) * w;
+        const sy = (-v.y * 0.5 + 0.5) * h;
+        p.el.style.left = sx + 'px';
+        p.el.style.top  = sy + 'px';
+      }
+    }
+    // domain dimension labels — show length / width / height on the
+    // bottom edges of the wind-tunnel box. Hide if no domain or domain
+    // box is currently toggled off.
+    const dX = document.getElementById('dimX');
+    const dY = document.getElementById('dimY');
+    const dZ = document.getElementById('dimZ');
+    if (!dX || !dY || !dZ) return;
+    const showDim = STATE.parsed && STATE.parsed.domain && this.domainBox && this.domainBox.visible;
+    [dX, dY, dZ].forEach(el => el.style.display = showDim ? 'block' : 'none');
+    if (!showDim) return;
+    const d = STATE.parsed.domain;
+    const cxw = (d.min.x + d.max.x) / 2;
+    const cyw = (d.min.y + d.max.y) / 2;
+    const czw = (d.min.z + d.max.z) / 2;
+    dX.textContent = `L ${d.size.x.toFixed(0)} m`;
+    dY.textContent = `W ${d.size.y.toFixed(0)} m`;
+    dZ.textContent = `H ${d.size.z.toFixed(0)} m`;
+    const dimPts = [
+      { el: dX, v: new THREE.Vector3(cxw,    d.min.y, d.min.z) },
+      { el: dY, v: new THREE.Vector3(d.min.x, cyw,    d.min.z) },
+      { el: dZ, v: new THREE.Vector3(d.min.x, d.min.y, czw) }
+    ];
+    for (const p of dimPts) {
+      const v = p.v.clone().project(this.camera);
+      const onScreen = v.z < 1 && v.x > -1.1 && v.x < 1.1 && v.y > -1.1 && v.y < 1.1;
+      p.el.style.opacity = onScreen ? '0.95' : '0';
+      const sx = (v.x * 0.5 + 0.5) * w;
+      const sy = (-v.y * 0.5 + 0.5) * h;
+      p.el.style.left = sx + 'px';
+      p.el.style.top  = sy + 'px';
+    }
+  },
+  applyTheme() {
+    const cs = getComputedStyle(document.body);
+    const bg = cs.getPropertyValue('--bg-deep').trim();
+    this.renderer.setClearColor(new THREE.Color(bg), 1);
+  },
+  onResize() {
+    const wrap = document.getElementById('viewer-wrap');
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w/h;
+    this.camera.updateProjectionMatrix();
+  },
+  installControls(canvas) {
+    // simple polar orbit + pan + zoom
+    this.target = new THREE.Vector3(0,0,1.0);
+    this.azimuth = -Math.PI*0.45;
+    this.polar = Math.PI*0.42;
+    this.dist = 18;
+    this.tool = 'orbit';
+    let isDown=false, lastX=0, lastY=0, mode='orbit';
+    canvas.addEventListener('mousedown', e => {
+      isDown=true; lastX=e.clientX; lastY=e.clientY;
+      mode = (this.tool==='pan'||e.shiftKey) ? 'pan' :
+             (this.tool==='zoom') ? 'zoom' : 'orbit';
+      // cancel intro auto-rotate the moment the user grabs the canvas
+      if (this.autoRot) {
+        this.autoRot = false;
+        const btn = document.getElementById('btnAutoRot');
+        if (btn) btn.classList.remove('active');
+      }
+    });
+    window.addEventListener('mousemove', e => {
+      if (!isDown) return;
+      const dx = e.clientX - lastX, dy = e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY;
+      if (mode==='orbit') {
+        this.azimuth -= dx * 0.005;
+        this.polar = Math.max(0.05, Math.min(Math.PI - 0.05, this.polar - dy * 0.005));
+      } else if (mode==='pan') {
+        const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 0);
+        const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrix, 1);
+        const factor = this.dist * 0.0015;
+        this.target.addScaledVector(right, -dx*factor);
+        this.target.addScaledVector(up, dy*factor);
+      } else if (mode==='zoom') {
+        this.dist = Math.max(0.5, this.dist * (1 + dy*0.005));
+      }
+    });
+    window.addEventListener('mouseup', () => isDown=false);
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      this.dist = Math.max(0.5, this.dist * (1 + e.deltaY*0.001));
+    }, { passive:false });
+  },
+  updateCam() {
+    const x = this.target.x + this.dist * Math.sin(this.polar) * Math.cos(this.azimuth);
+    const y = this.target.y + this.dist * Math.sin(this.polar) * Math.sin(this.azimuth);
+    const z = this.target.z + this.dist * Math.cos(this.polar);
+    this.camera.position.set(x, y, z);
+    this.camera.lookAt(this.target);
+  },
+  resetView() {
+    if (STATE.parsed && STATE.parsed.domain) {
+      const d = STATE.parsed.domain;
+      this.target.set((d.min.x+d.max.x)/2, (d.min.y+d.max.y)/2, (d.min.z+d.max.z)/2 * 0.4);
+      this.dist = Math.max(d.size.x, d.size.y, d.size.z) * 1.1;
+      // scale axis gnomon to ~10% of domain size
+      const L = Math.max(d.size.x, d.size.y, d.size.z) * 0.10;
+      this.axisLen = L;
+      if (this.axes) {
+        this.scene.remove(this.axes);
+        this.axes = makeAxes(L);
+        this.scene.add(this.axes);
+      }
+    } else {
+      this.target.set(1,0,0.6);
+      this.dist = 5;
+      this.axisLen = 2.5;
+    }
+    this.azimuth = -Math.PI*0.42;
+    this.polar = Math.PI*0.42;
+  },
+  setCam(preset) {
+    const t = this.target;
+    const d = this.dist;
+    if (preset==='front') { this.azimuth = 0;          this.polar = Math.PI/2; }
+    if (preset==='side')  { this.azimuth = Math.PI/2;  this.polar = Math.PI/2; }
+    if (preset==='top')   { this.azimuth = -Math.PI/2; this.polar = 0.01; }
+    if (preset==='iso')   { this.azimuth = -Math.PI*0.25; this.polar = Math.PI*0.35; }
+    if (preset==='persp') { this.azimuth = -Math.PI*0.42; this.polar = Math.PI*0.42; }
+  },
+  clear() {
+    Object.values(this.meshes).forEach(m => {
+      if (m.mesh) this.scene.remove(m.mesh);
+      if (m.edges) this.scene.remove(m.edges);
+      if (m.points) this.scene.remove(m.points);
+    });
+    this.meshes = {};
+    if (this.domainBox) { this.scene.remove(this.domainBox); this.domainBox=null; }
+    if (this.inletArrows) { this.scene.remove(this.inletArrows); this.inletArrows=null; }
+    if (this.ground) { this.scene.remove(this.ground); this.ground=null; }
+    if (this.refBox) { this.scene.remove(this.refBox); this.refBox=null; }
+    if (this.grid)   { this.scene.remove(this.grid);   this.grid=null; }
+  },
+  loadOBJ(obj) {
+    if (!obj) return;
+    const verts = obj.verts;
+    // sort by face count descending so the largest layer (the "main body")
+    // gets the first palette slot — which is reserved as a neutral grey.
+    const groupNames = Object.entries(obj.groups)
+      .filter(([_, g]) => g.faces && g.faces.length)
+      .sort((a, b) => b[1].faces.length - a[1].faces.length)
+      .map(([n]) => n);
+    const N = Math.max(groupNames.length, 6);
+    // Curated non-green palette. The green band 70°–170° is excluded entirely
+    // per the design rule. Saturation kept moderate so the viewport still
+    // reads as engineering-industrial, but each layer is visibly different —
+    // this signals to the user that the swatch is interactive.
+    const NON_GREEN_PALETTE = [
+      { hue:  10, sat: 55, lit: 60 },  // warm red
+      { hue: 215, sat: 40, lit: 62 },  // sky blue
+      { hue:  35, sat: 50, lit: 60 },  // tan-orange
+      { hue: 270, sat: 35, lit: 62 },  // violet
+      { hue:  50, sat: 45, lit: 64 },  // amber
+      { hue: 320, sat: 35, lit: 62 },  // rose-magenta
+      { hue: 240, sat: 30, lit: 60 },  // periwinkle
+      { hue:   0, sat: 30, lit: 56 },  // brick
+      { hue: 200, sat: 30, lit: 56 },  // slate blue
+      { hue: 290, sat: 30, lit: 58 },  // muted purple
+      { hue:  20, sat: 30, lit: 50 }   // rust
+    ];
+    // Layer names that read as the "main body" of the model. These default
+    // to a neutral grey so the eye-catching colors on the rest stand out.
+    const NEUTRAL_NAMES = /^(fairing|body|main|chassis|hull|shell|frame)$/i;
+    const layerColor = (i, name) => {
+      if (name && NEUTRAL_NAMES.test(name)) return { hue: 0, sat: 0, lit: 48 }; // #7a7a7a
+      return NON_GREEN_PALETTE[i % NON_GREEN_PALETTE.length];
+    };
+    let i = 0;
+    for (const name of groupNames) {
+      const g = obj.groups[name];
+      const positions = new Float32Array(g.faces.length * 9);
+      let p = 0;
+      for (const f of g.faces) {
+        for (let k=0;k<3;k++) {
+          const v = verts[f[k]] || [0,0,0];
+          positions[p++] = v[0]; positions[p++] = v[1]; positions[p++] = v[2];
+        }
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geo.computeVertexNormals();
+      const { hue, sat, lit } = layerColor(i, name);
+      const threeColor = new THREE.Color().setHSL(hue/360, sat/100, lit/100);
+      const hexColor = '#' + threeColor.getHexString();
+      const mat = new THREE.MeshStandardMaterial({ color: threeColor, roughness:0.78, metalness:0.05, flatShading:false });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.userData = { groupName: name, vCount: g.faces.length*3, fCount: g.faces.length };
+      this.scene.add(mesh);
+      // edges
+      const edgesGeo = new THREE.EdgesGeometry(geo, 30);
+      const edges = new THREE.LineSegments(edgesGeo, new THREE.LineBasicMaterial({ color: 0x222222, transparent:true, opacity:0.5 }));
+      edges.visible = false;
+      this.scene.add(edges);
+      // points
+      const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: threeColor, size: 0.02 }));
+      pts.visible = false;
+      this.scene.add(pts);
+      this.meshes[name] = { mesh, edges, points: pts, color: hexColor, hidden: false, opacity: 1 };
+      i++;
+    }
+    this.applyDisplay();
+  },
+  setLayerColor(name, hex) {
+    const m = this.meshes[name];
+    if (!m) return;
+    const c = new THREE.Color(hex);
+    if (m.mesh && m.mesh.material) m.mesh.material.color.copy(c);
+    if (m.points && m.points.material) m.points.material.color.copy(c);
+    m.color = hex;
+  },
+  setLayerVisible(name, visible) {
+    const m = this.meshes[name];
+    if (!m) return;
+    m.hidden = !visible;
+    this.applyDisplay();
+  },
+  setLayerOpacity(name, value) {
+    // value in [0, 1]
+    const m = this.meshes[name];
+    if (!m) return;
+    m.opacity = Math.max(0, Math.min(1, value));
+    if (m.mesh && m.mesh.material) {
+      m.mesh.material.transparent = m.opacity < 1;
+      m.mesh.material.opacity = m.opacity;
+      m.mesh.material.depthWrite = m.opacity >= 0.99;
+      m.mesh.material.needsUpdate = true;
+    }
+    if (m.edges && m.edges.material) {
+      m.edges.material.transparent = true;
+      m.edges.material.opacity = 0.5 * m.opacity;
+    }
+    if (m.points && m.points.material) {
+      m.points.material.transparent = m.opacity < 1;
+      m.points.material.opacity = m.opacity;
+    }
+  },
+  applyDisplay() {
+    const mode = this.displayMode;
+    Object.values(this.meshes).forEach(m => {
+      const live = !m.hidden;
+      if (mode==='solid')   { m.mesh.visible=live;  m.edges.visible=false;       m.points.visible=false; }
+      if (mode==='wire')    { m.mesh.visible=false; m.edges.visible=live;        m.points.visible=false; }
+      if (mode==='points')  { m.mesh.visible=false; m.edges.visible=false;       m.points.visible=live; }
+      if (mode==='overlay') { m.mesh.visible=live;  m.edges.visible=live;        m.points.visible=false; }
+    });
+  },
+  drawDomain(domain) {
+    if (this.domainBox) this.scene.remove(this.domainBox);
+    if (!domain) return;
+    const g = new THREE.BoxGeometry(domain.size.x, domain.size.y, domain.size.z);
+    const e = new THREE.EdgesGeometry(g);
+    const cs = getComputedStyle(document.body);
+    const lineColor = new THREE.Color(cs.getPropertyValue('--text').trim());
+    const m = new THREE.LineSegments(e, new THREE.LineBasicMaterial({ color: lineColor, transparent:true, opacity:0.5 }));
+    m.position.set(
+      (domain.min.x + domain.max.x)/2,
+      (domain.min.y + domain.max.y)/2,
+      (domain.min.z + domain.max.z)/2
+    );
+    this.scene.add(m);
+    this.domainBox = m;
+  },
+  drawInletArrows(domain, U) {
+    if (this.inletArrows) this.scene.remove(this.inletArrows);
+    if (!domain || !U) return;
+    const grp = new THREE.Group();
+    const dir = new THREE.Vector3(U[0],U[1],U[2]).normalize();
+    const len = Math.max(domain.size.x, domain.size.y, domain.size.z) * 0.07;
+    const cs = getComputedStyle(document.body);
+    const color = new THREE.Color(cs.getPropertyValue('--text').trim());
+    const ny = 4, nz = 3;
+    for (let iy=0; iy<ny; iy++) for (let iz=0; iz<nz; iz++) {
+      const y = domain.min.y + (iy+0.5) * domain.size.y / ny;
+      const z = domain.min.z + (iz+0.5) * domain.size.z / nz;
+      const ah = new THREE.ArrowHelper(dir, new THREE.Vector3(domain.min.x - len*0.2, y, z), len, color.getHex(), len*0.25, len*0.15);
+      grp.add(ah);
+    }
+    this.scene.add(grp);
+    this.inletArrows = grp;
+  },
+  drawGround(domain) {
+    if (this.ground) this.scene.remove(this.ground);
+    if (!domain) return;
+    const g = new THREE.PlaneGeometry(domain.size.x, domain.size.y, 1,1);
+    const cs = getComputedStyle(document.body);
+    const color = new THREE.Color(cs.getPropertyValue('--bg-alt').trim());
+    const mat = new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.3, side: THREE.DoubleSide });
+    const m = new THREE.Mesh(g, mat);
+    m.position.set((domain.min.x+domain.max.x)/2, (domain.min.y+domain.max.y)/2, domain.min.z);
+    this.scene.add(m);
+    this.ground = m;
+  },
+  drawGrid(domain) {
+    if (this.grid) this.scene.remove(this.grid);
+    if (!domain) return;
+    const size = Math.max(domain.size.x, domain.size.y);
+    const div = 20;
+    const cs = getComputedStyle(document.body);
+    const c1 = new THREE.Color(cs.getPropertyValue('--text-soft').trim() || '#888');
+    const c2 = new THREE.Color(cs.getPropertyValue('--line').trim() || '#333');
+    const grid = new THREE.GridHelper(size, div, c1, c2);
+    grid.material.transparent = true;
+    grid.material.opacity = 0.6;
+    // GridHelper lies in XZ by default; rotate to XY for Z-up scene
+    grid.rotation.x = Math.PI / 2;
+    grid.position.set(
+      (domain.min.x + domain.max.x) / 2,
+      (domain.min.y + domain.max.y) / 2,
+      domain.min.z + 0.001 // tiny lift so it doesn't z-fight the ground plane
+    );
+    this.scene.add(grid);
+    this.grid = grid;
+  },
+  drawRefBox(rb) {
+    if (this.refBox) this.scene.remove(this.refBox);
+    if (!rb) return;
+    const sx = rb.max.x-rb.min.x, sy = rb.max.y-rb.min.y, sz = rb.max.z-rb.min.z;
+    const g = new THREE.BoxGeometry(sx, sy, sz);
+    const e = new THREE.EdgesGeometry(g);
+    const cs = getComputedStyle(document.body);
+    const c = new THREE.Color(cs.getPropertyValue('--text').trim());
+    const mat = new THREE.LineDashedMaterial({ color:c, dashSize:0.3, gapSize:0.15, transparent:true, opacity:0.7 });
+    const m = new THREE.LineSegments(e, mat);
+    m.computeLineDistances();
+    m.position.set((rb.min.x+rb.max.x)/2, (rb.min.y+rb.max.y)/2, (rb.min.z+rb.max.z)/2);
+    this.scene.add(m);
+    this.refBox = m;
+  },
+  setSelected(name) {
+    this.selected = name;
+    Object.entries(this.meshes).forEach(([n, m]) => {
+      m.mesh.material.emissive = new THREE.Color(0x000000);
+    });
+    if (name && this.meshes[name]) {
+      this.meshes[name].mesh.material.emissive = new THREE.Color(0x444444);
+    }
+    document.querySelectorAll('.geom-row').forEach(r => r.classList.toggle('selected', r.dataset.name===name));
+    refreshSelectionPanel();
+  },
+  onClick(e) {
+    const wrap = document.getElementById('viewer-wrap');
+    const rect = wrap.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left)/rect.width)*2 - 1;
+    const my = -((e.clientY - rect.top)/rect.height)*2 + 1;
+    this.ray.setFromCamera({ x: mx, y: my }, this.camera);
+    const targets = Object.values(this.meshes).filter(m => m.mesh.visible).map(m => m.mesh);
+    const hits = this.ray.intersectObjects(targets, false);
+    if (hits.length) this.setSelected(hits[0].object.userData.groupName);
+  }
+};
+
+function makeAxes(L) {
+  const grp = new THREE.Group();
+  const mkLine = (a,b,col) => {
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...a), new THREE.Vector3(...b)]);
+    return new THREE.Line(g, new THREE.LineBasicMaterial({ color: col, linewidth:2 }));
+  };
+  // monotone — pick a neutral mid-grey that reads on both light and dark themes
+  const cs = getComputedStyle(document.body);
+  const themed = cs.getPropertyValue('--text-soft').trim();
+  const axisColor = new THREE.Color(themed || '#9a9a9a');
+  const xLine = mkLine([0,0,0],[L,0,0], axisColor);
+  const yLine = mkLine([0,0,0],[0,L,0], axisColor);
+  const zLine = mkLine([0,0,0],[0,0,L], axisColor);
+  xLine.userData.axis = 'X'; yLine.userData.axis = 'Y'; zLine.userData.axis = 'Z';
+  grp.add(xLine); grp.add(yLine); grp.add(zLine);
+  return grp;
+}
+
+// hook tool / display / camera buttons
+document.querySelectorAll('.viewer-toolbar [data-tool]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.viewer-toolbar [data-tool]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  Viewer.tool = b.dataset.tool;
+}));
+document.querySelectorAll('.viewer-toolbar [data-cam]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.viewer-toolbar [data-cam]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  Viewer.setCam(b.dataset.cam);
+}));
+document.querySelectorAll('.viewer-toolbar [data-disp]').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.viewer-toolbar [data-disp]').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  Viewer.displayMode = b.dataset.disp;
+  Viewer.applyDisplay();
+}));
+document.getElementById('btnAutoRot').addEventListener('click', () => {
+  Viewer.autoRot = !Viewer.autoRot;
+  document.getElementById('btnAutoRot').classList.toggle('active', Viewer.autoRot);
+});
+document.getElementById('btnReset3D').addEventListener('click', () => Viewer.resetView());
+document.getElementById('btnAxes').addEventListener('click', () => {
+  Viewer.axes.visible = !Viewer.axes.visible;
+  document.getElementById('btnAxes').classList.toggle('active', Viewer.axes.visible);
+  document.getElementById('btnAxes').textContent = Viewer.axes.visible ? 'Axes ON' : 'Axes OFF';
+});
+// Defensive helper — silently skip if button isn't in DOM (avoids breaking
+// the whole script when a button is removed in the future).
+function bindToggle(btnId, prop) {
+  const el = document.getElementById(btnId);
+  if (el) el.addEventListener('click', () => toggleObj(prop, btnId));
+}
+bindToggle('dShowDom',    'domainBox');
+bindToggle('dShowInlet',  'inletArrows');
+bindToggle('dShowGrid',   'grid');
+bindToggle('dShowRefBox', 'refBox');
+// dShowGround was removed in the 2x2 layout — guarded above so it can be
+// re-added later without code changes.
+
+function toggleObj(prop, btnId) {
+  if (Viewer[prop]) {
+    Viewer[prop].visible = !Viewer[prop].visible;
+    document.getElementById(btnId).classList.toggle('active', Viewer[prop].visible);
+  }
+}
+
+// init three viewer once libs are loaded; then auto-load the demo case so a
+// first-time visitor sees the app working without clicking anything.
+window.addEventListener('load', () => {
+  if (typeof THREE === 'undefined') { log('three.js failed to load','err'); return; }
+  Viewer.init();
+  // give the renderer one frame to lay out, then kick off the demo
+  setTimeout(() => {
+    log('Auto-loading demo case so you can see what OCV does…', 'ok');
+    loadDemo();
+  }, 80);
+});
+
+/* ===================== UI refresh ===================== */
+function refreshUI() {
+  const p = STATE.parsed || {};
+  // strip 0
+  document.getElementById('zipNameTop').textContent = STATE.caseName;
+  document.getElementById('zipTimeTop').textContent = STATE.uploadedAt ? STATE.uploadedAt.toLocaleString('en-GB',{hour12:false}) : '—';
+  document.getElementById('activeCase').textContent = STATE.caseName;
+
+  // load 3D scene FIRST so the geometry tree below can read the live
+  // Viewer.meshes[*].color values when it builds each row.
+  Viewer.clear();
+  if (STATE.obj) Viewer.loadOBJ(STATE.obj);
+  if (p.domain) {
+    Viewer.drawDomain(p.domain);
+    Viewer.drawGround(p.domain);
+    Viewer.drawInletArrows(p.domain, p.flowVelocity || p.inletU || [1,0,0]);
+  }
+  if (p.refBox) Viewer.drawRefBox(p.refBox);
+  if (Viewer.refBox) Viewer.refBox.visible = false;
+  if (p.domain) Viewer.drawGrid(p.domain);
+  if (Viewer.grid) Viewer.grid.visible = false; // off by default
+  Viewer.resetView();
+
+  // geometry tree
+  const tree = document.getElementById('geomTree');
+  tree.innerHTML = '';
+  if (STATE.obj) {
+    const groups = Object.entries(STATE.obj.groups).filter(([_,g])=>g.faces && g.faces.length);
+    groups.sort((a,b)=>b[1].faces.length-a[1].faces.length);
+
+    // bulk controls
+    const bulk = document.createElement('div');
+    bulk.className = 'layer-bulk';
+    const bShow = document.createElement('button'); bShow.textContent = 'Show All';
+    const bHide = document.createElement('button'); bHide.textContent = 'Hide All';
+    const bSolid= document.createElement('button'); bSolid.textContent = '100%';
+    bulk.appendChild(bShow); bulk.appendChild(bHide); bulk.appendChild(bSolid);
+    tree.appendChild(bulk);
+
+    const rowsByName = {};
+    groups.forEach(([name, g]) => {
+      const row = document.createElement('div');
+      row.className = 'geom-row';
+      row.dataset.name = name;
+      rowsByName[name] = row;
+
+      // visibility toggle
+      const eye = document.createElement('button');
+      eye.className = 'geom-eye';
+      eye.dataset.vis = '1';
+      eye.title = 'show / hide layer';
+      eye.textContent = 'visible';
+      eye.addEventListener('click', e => {
+        e.stopPropagation();
+        const newVis = eye.dataset.vis !== '1';
+        eye.dataset.vis = newVis ? '1' : '0';
+        row.classList.toggle('hidden', !newVis);
+        Viewer.setLayerVisible(name, newVis);
+      });
+
+      // color picker
+      const initHex = Viewer.meshes[name] ? Viewer.meshes[name].color : '#888888';
+      const swatch = document.createElement('input');
+      swatch.type = 'color';
+      swatch.className = 'geom-swatch';
+      swatch.value = initHex;
+      swatch.title = 'layer color — click to change';
+      swatch.addEventListener('click', e => e.stopPropagation());
+
+      // name + meta (hex · face count)
+      const nm = document.createElement('span');
+      nm.className = 'geom-name'; nm.textContent = name; nm.title = name;
+      const meta = document.createElement('span');
+      meta.className = 'geom-meta';
+      const formatFaces = n => n >= 1000 ? n.toLocaleString() : String(n);
+      const setMeta = (hex) => { meta.textContent = `${hex.toLowerCase()}  ·  ${formatFaces(g.faces.length)} faces`; };
+      setMeta(initHex);
+
+      swatch.addEventListener('input', e => {
+        const hex = e.target.value;
+        Viewer.setLayerColor(name, hex);
+        setMeta(hex);
+      });
+
+      // opacity slider
+      const op = document.createElement('input');
+      op.type = 'range';
+      op.className = 'geom-opacity';
+      op.min = '0'; op.max = '100'; op.value = '100'; op.step = '1';
+      op.title = 'opacity 100%';
+      op.addEventListener('click', e => e.stopPropagation());
+      op.addEventListener('input', e => {
+        const v = parseInt(e.target.value, 10);
+        op.title = `opacity ${v}%`;
+        Viewer.setLayerOpacity(name, v / 100);
+      });
+
+      row.appendChild(eye);
+      row.appendChild(swatch);
+      row.appendChild(nm);
+      row.appendChild(meta);
+      row.appendChild(op);
+      row.addEventListener('click', () => Viewer.setSelected(name));
+      tree.appendChild(row);
+    });
+
+    // bulk handlers
+    bShow.addEventListener('click', () => {
+      groups.forEach(([n]) => {
+        Viewer.setLayerVisible(n, true);
+        const r = rowsByName[n]; if (r) { r.classList.remove('hidden'); r.querySelector('.geom-eye').dataset.vis = '1'; }
+      });
+    });
+    bHide.addEventListener('click', () => {
+      groups.forEach(([n]) => {
+        Viewer.setLayerVisible(n, false);
+        const r = rowsByName[n]; if (r) { r.classList.add('hidden'); r.querySelector('.geom-eye').dataset.vis = '0'; }
+      });
+    });
+    bSolid.addEventListener('click', () => {
+      groups.forEach(([n]) => {
+        Viewer.setLayerOpacity(n, 1);
+        const r = rowsByName[n]; if (r) { const s = r.querySelector('.geom-opacity'); if (s) { s.value = '100'; s.title = 'opacity 100%'; } }
+      });
+    });
+  } else {
+    tree.innerHTML = '<div class="muted mono" style="font-size:10px;">No surface geometry parsed.</div>';
+  }
+
+  // scene props
+  let totalV = 0, totalT = 0, ng = 0;
+  Object.values(Viewer.meshes).forEach(m => {
+    totalV += m.mesh.userData.vCount; totalT += m.mesh.userData.fCount; ng++;
+  });
+  document.getElementById('pGroups').textContent = ng;
+  document.getElementById('pVerts').textContent = totalV.toLocaleString();
+  document.getElementById('pTris').textContent = totalT.toLocaleString();
+  if (p.domain) {
+    const d = p.domain;
+    document.getElementById('pBboxX').textContent = `${d.min.x.toFixed(2)} → ${d.max.x.toFixed(2)} m`;
+    document.getElementById('pBboxY').textContent = `${d.min.y.toFixed(2)} → ${d.max.y.toFixed(2)} m`;
+    document.getElementById('pBboxZ').textContent = `${d.min.z.toFixed(2)} → ${d.max.z.toFixed(2)} m`;
+  }
+
+  // strip 3 dashboards
+  drawPipeline(p);
+  drawModelsTable(p);
+  drawBcsTable(p);
+  drawParamsTable(p);
+  drawMeshTable(p);
+  drawAeroTable(p);
+  drawInitTable(p);
+  drawQualityTable(p);
+  drawFunctionsBlock(p);
+  drawDecompBlock(p);
+}
+
+function drawInitTable(p) {
+  const t = document.getElementById('initTbl'); if (!t) return;
+  const rows = [];
+  if (p.flowVelocity) rows.push(['flowVelocity', `(${p.flowVelocity.join(' ')}) m/s`]);
+  else if (p.inletU)  rows.push(['inlet U', `(${p.inletU.join(' ')}) m/s`]);
+  if (p.turbKE   != null) rows.push(['turbulent KE k', `${p.turbKE} m²/s²`]);
+  if (p.turbOmega!= null) rows.push(['turbulent ω', `${p.turbOmega} 1/s`]);
+  if (p.nu       != null) rows.push(['ν (kinematic)', `${p.nu.toExponential(2)} m²/s`]);
+  if (p.simulationType === 'LES') {
+    rows.push(['initial nuTilda', '0.05 m²/s (typical S-A)']);
+  } else if (p.rasModel) {
+    rows.push(['nut wall fn', 'nutUSpaldingWallFunction']);
+  }
+  if (!rows.length) { t.innerHTML = '<tr><td class="muted" colspan="2">no initial-condition fields parsed</td></tr>'; return; }
+  t.innerHTML = `<tr><th>Field</th><th>Value</th></tr>` + rows.map(r => `<tr><td>${r[0]}</td><td class="val">${r[1]}</td></tr>`).join('');
+}
+
+function drawQualityTable(p) {
+  const t = document.getElementById('qualityTbl'); if (!t) return;
+  if (!p.meshQuality) { t.innerHTML = '<tr><td class="muted" colspan="2">snappyHexMeshDict.meshQualityControls not found</td></tr>'; return; }
+  const q = p.meshQuality;
+  const rows = [
+    ['maxNonOrtho',          q.maxNonOrtho ?? '—'],
+    ['maxBoundarySkewness',  q.maxBoundarySkewness ?? '—'],
+    ['maxInternalSkewness',  q.maxInternalSkewness ?? '—'],
+    ['maxConcave',           q.maxConcave ?? '—'],
+    ['minVol',               q.minVol ?? '—'],
+    ['minTetQuality',        q.minTetQuality ?? '—'],
+    ['minTwist',             q.minTwist ?? '—'],
+    ['minDeterminant',       q.minDeterminant ?? '—'],
+    ['minFaceWeight',        q.minFaceWeight ?? '—'],
+    ['minVolRatio',          q.minVolRatio ?? '—']
+  ];
+  t.innerHTML = `<tr><th>Threshold</th><th>Value</th></tr>` + rows.map(r => `<tr><td>${r[0]}</td><td class="val">${r[1]}</td></tr>`).join('');
+}
+
+function drawFunctionsBlock(p) {
+  const el = document.getElementById('fnObjBlock'); if (!el) return;
+  if (!p.functions && !p.functionIncludes) { el.innerHTML = '<div class="muted mono" style="font-size:10px;">no function objects parsed</div>'; return; }
+  let html = '';
+  if (p.functions && p.functions.length) {
+    html += '<table class="kv"><tr><th>Name</th><th>Type</th></tr>';
+    for (const f of p.functions) {
+      html += `<tr><td>${f.name}</td><td class="val">${f.type}</td></tr>`;
+    }
+    html += '</table>';
+  }
+  if (p.functionIncludes && p.functionIncludes.length) {
+    html += '<div style="margin-top:8px;font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.12em;">#include</div>';
+    html += '<ul style="font-family:JetBrains Mono,monospace;font-size:10px;padding-left:14px;margin-top:4px;">';
+    for (const inc of p.functionIncludes) html += `<li>${inc}</li>`;
+    html += '</ul>';
+  }
+  el.innerHTML = html || '<div class="muted">no function objects</div>';
+}
+
+function drawDecompBlock(p) {
+  const el = document.getElementById('decompBlock'); if (!el) return;
+  if (!p.nProcs) { el.innerHTML = '<div class="muted mono" style="font-size:10px;">decomposeParDict not found</div>'; return; }
+  let html = `<table class="kv">
+    <tr><th>Field</th><th>Value</th></tr>
+    <tr><td>numberOfSubdomains</td><td class="val">${p.nProcs}</td></tr>
+    <tr><td>method / decomposer</td><td class="val">${p.decompMethod || '—'}</td></tr>`;
+  if (p.decompDistributor) html += `<tr><td>distributor</td><td class="val">${p.decompDistributor}</td></tr>`;
+  html += '</table>';
+  // CSS-grid subdomain map — absolute 10 px font matches the surrounding tables
+  const cells = p.nProcs;
+  const cols = Math.ceil(Math.sqrt(cells));
+  html += `<div style="margin-top:12px;font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.12em;">subdomain map</div>`;
+  html += `<div style="display:grid;grid-template-columns:repeat(${cols},minmax(0,1fr));gap:2px;margin-top:6px;max-width:240px;">`;
+  for (let i = 0; i < cells; i++) {
+    const fillBg = (i % 2 === 0) ? 'var(--bg-alt)' : 'var(--bg-deep)';
+    html += `<div style="background:${fillBg};border:1px solid var(--accent-red);padding:5px 0;text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--text);">${i}</div>`;
+  }
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+function refreshSelectionPanel() {
+  const sp = document.getElementById('selProps');
+  const name = Viewer.selected;
+  if (!name || !Viewer.meshes[name]) {
+    sp.innerHTML = '<dt>name</dt><dd>—</dd><dt>verts</dt><dd>—</dd><dt>tris</dt><dd>—</dd><dt>bbox</dt><dd>—</dd>';
+    return;
+  }
+  const m = Viewer.meshes[name];
+  m.mesh.geometry.computeBoundingBox();
+  const b = m.mesh.geometry.boundingBox;
+  sp.innerHTML = `
+    <dt>name</dt><dd>${name}</dd>
+    <dt>verts</dt><dd>${m.mesh.userData.vCount.toLocaleString()}</dd>
+    <dt>tris</dt><dd>${m.mesh.userData.fCount.toLocaleString()}</dd>
+    <dt>bbox X</dt><dd>${b.min.x.toFixed(3)} → ${b.max.x.toFixed(3)}</dd>
+    <dt>bbox Y</dt><dd>${b.min.y.toFixed(3)} → ${b.max.y.toFixed(3)}</dd>
+    <dt>bbox Z</dt><dd>${b.min.z.toFixed(3)} → ${b.max.z.toFixed(3)}</dd>
+    <dt>visible</dt><dd>${m.hidden ? 'no' : 'yes'}</dd>
+    <dt>opacity</dt><dd>${(m.opacity != null ? m.opacity : 1).toFixed(2)}</dd>
+    <dt>color</dt><dd><span style="display:inline-block;width:8px;height:8px;background:${m.color};border:1px solid var(--line);"></span> ${m.color}</dd>
+  `;
+}
+
+/* -------- dashboard drawers -------- */
+function drawPipeline(p) {
+  const el = document.getElementById('pipeline');
+  el.innerHTML = '';
+  // Stage detection — any positive LES signal switches the LES card on.
+  // The "active" simulationType is the strongest signal (LES files
+  // override RAS at runtime), so we trust simulationType most.
+  const sim = (p.simulationType || '').toUpperCase();
+  const hasLES  = sim === 'LES' ||
+                  !!p.lesApplication ||
+                  !!p.lesModel ||
+                  !!p.lesDelta ||
+                  !!p.lesDeltaT;
+  // RANS shows when a RAS model is parsed OR explicitly RAS in the active
+  // momentumTransport. For LES with a RANS precursor (our demo + OF12
+  // motorBike LES), both are true and we get RANS PRECURSOR → LES.
+  const hasRANS = !!p.rasModel ||
+                  sim === 'RAS' ||
+                  sim === 'RANS' ||
+                  /simpleFoam/i.test(p.application || '');
+  // expose to console for live debugging
+  try { window.__ocvPipeline = { sim, hasRANS, hasLES, p:{lesApp:p.lesApplication, lesModel:p.lesModel, lesDelta:p.lesDelta, lesDt:p.lesDeltaT, rasModel:p.rasModel, simType:p.simulationType, app:p.application} }; } catch(_) {}
+  const stages = [];
+  stages.push({
+    t:'GEOMETRY',
+    h: STATE.obj ? `${Object.keys(STATE.obj.groups).length} groups` : '— no obj —',
+    d:'.obj surface mesh'
+  });
+  stages.push({
+    t:'BLOCKMESH',
+    h: p.cells ? `${p.cells.x}×${p.cells.y}×${p.cells.z}` : '—',
+    d: p.domain ? `${p.domain.size.x}×${p.domain.size.y}×${p.domain.size.z} m` : ''
+  });
+  stages.push({
+    t:'SNAPPYHEXMESH',
+    h: p.refSurface ? `Lvl ${p.refSurface.min}–${p.refSurface.max}` : '—',
+    d: p.refRegion ? `wake lvl ${p.refRegion.level}` : ''
+  });
+  if (hasRANS) {
+    stages.push({
+      t: hasLES ? 'RANS PRECURSOR' : 'RANS',
+      h: p.application && /simpleFoam/i.test(p.application) ? 'simpleFoam' : (p.solverModule || 'simpleFoam'),
+      d: p.rasModel || ''
+    });
+  }
+  if (hasLES) {
+    stages.push({
+      t:'LES',
+      h: p.lesApplication || 'pisoFoam',
+      d: p.lesModel ? `${p.lesModel}${p.lesDeltaT ? ', Δt=' + p.lesDeltaT + 's' : ''}` : ''
+    });
+  }
+  stages.push({
+    t:'POST',
+    h:'forceCoeffs',
+    d:'cuttingPlane · streamLines'
+  });
+  // pad numeric prefix
+  stages.forEach((s, i) => { s.t = String(i + 1).padStart(2, '0') + ' ' + s.t; });
+  stages.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.className = 'step';
+    div.innerHTML = `<div class="t">${s.t}</div><div class="h">${s.h}</div><div class="d">${s.d}</div>`;
+    el.appendChild(div);
+    if (i < stages.length - 1) {
+      const a = document.createElement('div'); a.className = 'arrow'; a.textContent = '▶';
+      el.appendChild(a);
+    }
+  });
+}
+
+function drawModelsTable(p) {
+  const t = document.getElementById('modelsTbl');
+  const rows = [
+    ['Sim Type', p.simulationType || '—'],
+    ['LES Model', p.lesModel || '—'],
+    ['LES Δ filter', p.lesDelta || '—'],
+    ['RAS Model', p.rasModel || '—'],
+    ['ddt Scheme', p.ddtScheme || '—'],
+    ['div(phi,U)', p.divU || '—'],
+    ['Laplacian', p.lapScheme || '—'],
+    ['Solver (LES)', p.lesApplication || p.application || '—'],
+    ['PISO correctors', p.nCorrectors!=null ? p.nCorrectors : '—'],
+    ['Decomp', p.decompMethod ? `${p.decompMethod} · ${p.nProcs||'?'} procs` : '—']
+  ];
+  t.innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td class="val">${r[1]}</td></tr>`).join('');
+}
+
+function drawBcsTable(p) {
+  const t = document.getElementById('bcsTbl');
+  if (!t) return;
+  // merge sources: prefer polyMesh boundary if present, then blockMesh, then U BCs.
+  const merged = new Map(); // name -> { type, uBC }
+  const adopt = (list) => {
+    if (!list) return;
+    for (const it of list) {
+      if (!merged.has(it.name)) merged.set(it.name, { type: it.type });
+      else merged.get(it.name).type = merged.get(it.name).type || it.type;
+    }
+  };
+  adopt(p.polyPatches);
+  adopt(p.bmPatches);
+  if (p.uBC) {
+    for (const [name, bc] of Object.entries(p.uBC)) {
+      // skip generated processor patches and the catch-all proc.* alias
+      if (/^proc/.test(name)) continue;
+      if (!merged.has(name)) merged.set(name, { type: '(snappy)' });
+      merged.get(name).uBC = bc;
+    }
+  }
+  if (!merged.size) {
+    t.innerHTML = '<tr><td class="muted" colspan="3">no patches found</td></tr>';
+    return;
+  }
+  // type → short label
+  const shortType = (s) => {
+    if (!s) return '—';
+    if (s === 'symmetryPlane' || s === 'symmetry') return 'sym';
+    if (s === 'patch') return 'patch';
+    if (s === 'wall') return 'wall';
+    if (s === 'empty') return 'empty';
+    if (s === 'cyclic') return 'cyclic';
+    if (s === 'processor') return 'proc';
+    return s;
+  };
+  // role hint
+  const role = (name, type, uBC) => {
+    if (/^inlet/i.test(name) || (uBC === 'fixedValue' && type === 'patch')) return 'inflow';
+    if (/^outlet/i.test(name) || uBC === 'inletOutlet' || uBC === 'zeroGradient') return 'outflow';
+    if (type === 'wall' || uBC === 'noSlip' || /Wall/i.test(name)) return 'wall';
+    if (shortType(type) === 'sym') return 'symmetry';
+    return '—';
+  };
+  const rows = [...merged.entries()].map(([name, v]) => ({
+    name, type: shortType(v.type), uBC: v.uBC || '—', role: role(name, v.type, v.uBC)
+  }));
+  // stable order: inlet, outlet, walls, symmetry, others
+  const orderKey = (r) => {
+    if (r.role === 'inflow') return 0;
+    if (r.role === 'outflow') return 1;
+    if (r.role === 'wall')   return 2;
+    if (r.role === 'symmetry') return 3;
+    return 4;
+  };
+  rows.sort((a,b) => orderKey(a) - orderKey(b) || a.name.localeCompare(b.name));
+  t.innerHTML =
+    '<tr><th>Patch</th><th>Type</th><th>U BC</th></tr>' +
+    rows.map(r => `<tr title="${r.role}"><td>${r.name}</td><td class="val">${r.type}</td><td class="val">${r.uBC}</td></tr>`).join('');
+}
+
+function drawDomainDiagrams(p) {
+  const el = document.getElementById('domainDiagrams');
+  if (!p.domain) { el.innerHTML = '<div class="muted mono" style="font-size:10px;">domain not parsed</div>'; return; }
+  const d = p.domain;
+  // Front view: y-z plane (looking down +X)
+  const W = 280, H = 130, mx = 14, my = 22;
+  const innerW = W - 2*mx, innerH = H - 2*my;
+  // Side view: x-z plane (looking down +Y)
+  function svgFront() {
+    const sx = innerW / d.size.y, sz = innerH / d.size.z;
+    const sc = Math.min(sx, sz);
+    const cx = W/2, cz = H - my;
+    const fx = v => cx + (v - (d.min.y+d.max.y)/2) * sc;
+    const fz = v => cz - (v - d.min.z) * sc;
+    const dx = d.size.y * sc, dy = d.size.z * sc;
+    const x0 = cx - dx/2, y0 = fz(d.max.z);
+    return `
+      <svg class="diag" viewBox="0 0 ${W} ${H}">
+        <text x="${mx}" y="12" class="cond upper" style="font-family:'Saira Condensed',sans-serif;letter-spacing:0.16em;">Front (looking +X)</text>
+        <rect class="domain" x="${x0}" y="${y0}" width="${dx}" height="${dy}"/>
+        <line class="axis" x1="${mx}" y1="${cz}" x2="${W-mx}" y2="${cz}"/>
+        <line class="axis" x1="${cx}" y1="${my}" x2="${cx}" y2="${H-2}"/>
+        <text x="${W-mx-8}" y="${cz-3}">Y →</text>
+        <text x="${cx+3}" y="${my+8}">Z ↑</text>
+        <text x="${x0-1}" y="${y0-2}">${d.size.y.toFixed(0)}m × ${d.size.z.toFixed(0)}m</text>
+        <!-- vehicle silhouette: simplified motorbike at origin -->
+        <ellipse class="veh" cx="${fx(0)}" cy="${fz(0.7)}" rx="${0.7*sc}" ry="${0.6*sc}"/>
+        <line class="dim" x1="${x0}" y1="${y0+dy+6}" x2="${x0+dx}" y2="${y0+dy+6}"/>
+        <text x="${x0+dx/2-12}" y="${y0+dy+14}">${d.size.y.toFixed(1)} m</text>
+      </svg>`;
+  }
+  function svgSide() {
+    const sx = innerW / d.size.x, sz = innerH / d.size.z;
+    const sc = Math.min(sx, sz);
+    const cx = W/2, cz = H - my;
+    const fx = v => cx + (v - (d.min.x+d.max.x)/2) * sc;
+    const fz = v => cz - (v - d.min.z) * sc;
+    const dx = d.size.x * sc, dy = d.size.z * sc;
+    const x0 = cx - dx/2, y0 = fz(d.max.z);
+    let refRect = '';
+    if (p.refBox) {
+      const rx = fx(p.refBox.min.x), ry = fz(p.refBox.max.z);
+      const rw = (p.refBox.max.x - p.refBox.min.x) * sc;
+      const rh = (p.refBox.max.z - p.refBox.min.z) * sc;
+      refRect = `<rect class="refbox" x="${rx}" y="${ry}" width="${rw}" height="${rh}"/>`;
+    }
+    return `
+      <svg class="diag" viewBox="0 0 ${W} ${H}">
+        <text x="${mx}" y="12" class="cond upper" style="font-family:'Saira Condensed',sans-serif;letter-spacing:0.16em;">Side (looking +Y)</text>
+        <rect class="domain" x="${x0}" y="${y0}" width="${dx}" height="${dy}"/>
+        ${refRect}
+        <line class="axis" x1="${mx}" y1="${cz}" x2="${W-mx}" y2="${cz}"/>
+        <text x="${W-mx-8}" y="${cz-3}">X →</text>
+        <text x="${fx(0)+3}" y="${my+8}">Z ↑</text>
+        <!-- inlet arrow -->
+        <line class="arrow" x1="${x0-8}" y1="${cz-dy*0.3}" x2="${x0-1}" y2="${cz-dy*0.3}"/>
+        <polygon class="arrow-head" points="${x0-1},${cz-dy*0.3-2} ${x0-1},${cz-dy*0.3+2} ${x0+2},${cz-dy*0.3}"/>
+        <text x="${x0-22}" y="${cz-dy*0.3-3}">U</text>
+        <!-- vehicle -->
+        <ellipse class="veh" cx="${fx(0)}" cy="${fz(0.7)}" rx="${1.0*sc}" ry="${0.5*sc}"/>
+        <circle class="veh" cx="${fx(-0.7)}" cy="${fz(0.3)}" r="${0.3*sc}"/>
+        <circle class="veh" cx="${fx(0.7)}" cy="${fz(0.3)}" r="${0.3*sc}"/>
+      </svg>`;
+  }
+  el.innerHTML = svgFront() + svgSide();
+}
+
+function drawParamsTable(p) {
+  const t = document.getElementById('paramsTbl');
+  const rows = [];
+  rows.push(['Inlet U_inf', p.Uref!=null?`${p.Uref.toFixed(2)} m/s`:'—']);
+  rows.push(['ν (kinematic)', p.nu!=null?`${p.nu.toExponential(2)} m²/s`:'—']);
+  rows.push(['Δt (LES)', p.lesDt!=null?`${p.lesDt} s`:'—']);
+  rows.push(['End time', p.lesEndTime!=null?`${p.lesEndTime} s`:'—']);
+  rows.push(['Write every', p.writeInterval!=null?`${p.writeInterval} steps`:'—']);
+  rows.push(['Base cell Δx', p.baseCell?`${p.baseCell.x.toFixed(3)} m`:'—']);
+  rows.push(['Cell @ wake (lvl '+(p.refRegion?p.refRegion.level:'?')+')', p.cellAtWake!=null?`${(p.cellAtWake*1000).toFixed(2)} mm`:'—']);
+  rows.push(['Cell @ surf (lvl '+(p.refSurface?p.refSurface.max:'?')+')', p.cellAtMax!=null?`${(p.cellAtMax*1000).toFixed(2)} mm`:'—']);
+  rows.push(['CFL @ wake', p.cflWake!=null?p.cflWake.toFixed(3):'—']);
+  rows.push(['CFL @ surface (worst)', p.cflSurface!=null?p.cflSurface.toFixed(3):'—']);
+  rows.push(['turbulent KE init', p.turbKE!=null?`${p.turbKE} m²/s²`:'—']);
+  t.innerHTML = `<tr><th>Quantity</th><th>Value</th></tr>` + rows.map(r => `<tr><td>${r[0]}</td><td class="val">${r[1]}</td></tr>`).join('');
+}
+
+function drawMeshTable(p) {
+  const t = document.getElementById('meshTbl');
+  const rows = [];
+  if (p.cells) rows.push(['Base block (x,y,z)', `${p.cells.x} × ${p.cells.y} × ${p.cells.z}`]);
+  if (p.baseCell) rows.push(['Base cell size', `${p.baseCell.x.toFixed(2)} × ${p.baseCell.y.toFixed(2)} × ${p.baseCell.z.toFixed(2)} m`]);
+  if (p.refSurface) rows.push(['Surface refinement', `${p.refSurface.name} · level (${p.refSurface.min}, ${p.refSurface.max})`]);
+  if (p.refRegion)  rows.push(['Region refinement', `${p.refRegion.name} · level ${p.refRegion.level}`]);
+  if (p.refBox) {
+    rows.push(['RefBox min', `(${p.refBox.min.x}, ${p.refBox.min.y}, ${p.refBox.min.z}) m`]);
+    rows.push(['RefBox max', `(${p.refBox.max.x}, ${p.refBox.max.y}, ${p.refBox.max.z}) m`]);
+  }
+  if (p.maxGlobalCells) rows.push(['maxGlobalCells', p.maxGlobalCells.toExponential(2)]);
+  if (p.nProcs) rows.push(['Subdomains', `${p.nProcs} (${p.decompMethod||'?'})`]);
+  t.innerHTML = `<tr><th>Field</th><th>Value</th></tr>` + rows.map(r => `<tr><td>${r[0]}</td><td class="val">${r[1]}</td></tr>`).join('');
+}
+
+function drawAeroTable(p) {
+  const t = document.getElementById('aeroTbl');
+  const rho = p.rhoInf!=null?p.rhoInf:1.225;
+  const rows = [
+    ['Air density ρ', `${rho.toFixed(3)} kg/m³ (incompressible)`],
+    ['Inlet velocity U∞', p.Uref!=null?`${p.Uref.toFixed(2)} m/s`:'—'],
+    ['Reference length L', p.lRef!=null?`${p.lRef} m`:'—'],
+    ['Reference area A', p.Aref!=null?`${p.Aref} m²`:'—'],
+    ['Reynolds number', p.Re!=null?p.Re.toExponential(2):'—'],
+    ['Mach (a≈340 m/s)', p.Uref!=null?(p.Uref/340).toFixed(3):'—'],
+    ['Drag direction', p.dragDir?`(${p.dragDir.join(' ')})`:'—'],
+    ['Lift direction', p.liftDir?`(${p.liftDir.join(' ')})`:'—'],
+    ['Pitch axis', p.pitchAxis?`(${p.pitchAxis.join(' ')})`:'—'],
+    ['Dynamic pressure ½ρU²', p.Uref!=null?`${(0.5*rho*p.Uref*p.Uref).toFixed(0)} Pa`:'—']
+  ];
+  t.innerHTML = `<tr><th>Quantity</th><th>Value</th></tr>` + rows.map(r => `<tr><td>${r[0]}</td><td class="val">${r[1]}</td></tr>`).join('');
+}
+
+/* ===================== DEMO CASE ===================== */
+const DEMO = {
+  caseName: 'demo case',
+  parsed: {
+    application: 'simpleFoam',
+    lesApplication: 'pisoFoam',
+    nu: 1.5e-5,
+    deltaT: 1, endTime: 500,
+    lesDeltaT: 1e-4, lesEndTime: 1,
+    writeInterval: 1000,
+    simulationType: 'LES',
+    lesModel: 'SpalartAllmarasDDES',
+    lesDelta: 'cubeRootVol',
+    rasModel: 'SpalartAllmaras',
+    inletU: [100,0,0], flowVelocity:[100,0,0],
+    turbKE: 0.24, turbOmega: 1.78,
+    domain: {
+      min:{x:-12,y:-5,z:0}, max:{x:23,y:5,z:15},
+      size:{x:35,y:10,z:15}
+    },
+    cells: { x:35, y:10, z:15 },
+    refSurface: { name:'motorBike', min:9, max:10 },
+    refRegion: { name:'refinementBox', level:5 },
+    refBox: { min:{x:-1,y:-0.7,z:0}, max:{x:8,y:0.7,z:2.5} },
+    maxGlobalCells: 7e8,
+    nProcs: 16, decompMethod: 'ptscotch',
+    lRef: 1.42, Aref: 0.75, magUInf: 100, rhoInf: 1,
+    liftDir: [0,0,1], dragDir: [1,0,0], pitchAxis: [0,1,0],
+    ddtScheme: 'backward', divU: 'Gauss LUST unlimitedGrad(U)',
+    lapScheme: 'Gauss linear limited corrected 0.33',
+    nCorrectors: 3,
+    bmPatches: [
+      { name:'inlet',     type:'patch' },
+      { name:'outlet',    type:'patch' },
+      { name:'lowerWall', type:'wall' },
+      { name:'upperWall', type:'symmetryPlane' },
+      { name:'front',     type:'symmetryPlane' },
+      { name:'back',      type:'symmetryPlane' }
+    ],
+    uBC: {
+      inlet:'fixedValue', outlet:'inletOutlet',
+      lowerWall:'fixedValue', upperWall:'symmetryPlane',
+      front:'symmetryPlane', back:'symmetryPlane',
+      'motorBike_.*':'noSlip'
+    }
+  }
+};
+
+// Generic loader for any zip URL hosted alongside the app — used by the
+// "Self-hosted" tutorial cards. Mirrors the demo-load behaviour: fetch →
+// wrap as File → push through the same parsing pipeline → kick off
+// auto-rotate so the user sees the geometry immediately.
+function loadCaseFromUrl(url, displayName) {
+  log(`Loading ${displayName || url}…`);
+  fetch(url).then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.blob();
+  }).then(blob => {
+    const fname = (url.split('/').pop() || 'case.zip');
+    const f = new File([blob], fname);
+    return loadZipFile(f, false);
+  }).then(() => {
+    if (Viewer.scene) {
+      Viewer.autoRot = true;
+      const btn = document.getElementById('btnAutoRot');
+      if (btn) btn.classList.add('active');
+    }
+  }).catch(err => {
+    log(`Failed to load ${displayName || url}: ${err.message}`, 'err');
+  });
+}
+
+function loadDemo() {
+  // Try fetch first (works if served)
+  log('Loading demo case…');
+  fetch('./LES_RL9-10_v100ms.zip').then(r => {
+    if (!r.ok) throw new Error('not found');
+    return r.blob();
+  }).then(blob => {
+    const f = new File([blob], 'LES_RL9-10_v100ms.zip');
+    return loadZipFile(f, true);
+  }).then(() => {
+    // intro animation: auto-rotate so the user sees what the app does
+    if (Viewer.scene) {
+      Viewer.autoRot = true;
+      const btn = document.getElementById('btnAutoRot');
+      if (btn) btn.classList.add('active');
+    }
+  }).catch(() => {
+    // fall back to metadata-only demo
+    log('Demo zip not co-located — loading metadata-only demo','warn');
+    STATE.caseName = DEMO.caseName;
+    STATE.uploadedAt = new Date();
+    STATE.parsed = JSON.parse(JSON.stringify(DEMO.parsed));
+    STATE.obj = null;
+    STATE.isDemo = true;
+    // derive
+    const p = STATE.parsed;
+    p.baseCell = { x: p.domain.size.x/p.cells.x, y: p.domain.size.y/p.cells.y, z: p.domain.size.z/p.cells.z };
+    p.cellAtMin = Math.min(p.baseCell.x,p.baseCell.y,p.baseCell.z) / 2**p.refSurface.min;
+    p.cellAtMax = Math.min(p.baseCell.x,p.baseCell.y,p.baseCell.z) / 2**p.refSurface.max;
+    p.cellAtWake = Math.min(p.baseCell.x,p.baseCell.y,p.baseCell.z) / 2**p.refRegion.level;
+    p.Uref = 100; p.Re = 100*1.42/1.5e-5;
+    p.lesDt = p.lesDeltaT;
+    p.cflWake = p.Uref*p.lesDt/p.cellAtWake;
+    p.cflSurface = p.Uref*p.lesDt/p.cellAtMax;
+    refreshUI();
+    log('Demo metadata loaded (drop the .zip for full geometry)','ok');
+  });
+}
+
+/* ===================== MODALS ===================== */
+function openModal(id) { const m = document.getElementById(id); if (m) m.classList.add('show'); }
+function closeModal(id) { const m = document.getElementById(id); if (m) m.classList.remove('show'); }
+document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => closeModal(b.dataset.close)));
+document.querySelectorAll('.modal-backdrop').forEach(bd => {
+  bd.addEventListener('click', e => { if (e.target === bd) bd.classList.remove('show'); });
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.modal-backdrop.show').forEach(m => m.classList.remove('show'));
+});
+
+/* ===================== ABOUT POPUP ===================== */
+const ABOUT_HTML = `
+<h1>OCV — OpenFOAM Case Viewer</h1>
+<p><em>A free, browser-based pre-flight check for vehicle CFD cases. Catch a misnamed boundary or an out-of-band CFL before the cluster eats your night.</em></p>
+
+<h2>What it does</h2>
+<p>Drop a zipped OpenFOAM case onto the page. OCV unpacks it in your browser, parses every dictionary it can find — <code>controlDict</code>, <code>fvSchemes</code>, <code>blockMeshDict</code>, <code>snappyHexMeshDict</code>, <code>forceCoeffs</code>, <code>0/U</code>, and the rest — renders the geometry in 3D, and lays the parsed values out across twelve dashboard sections. A one-click validator checks Mach, CFL, refinement levels, blockage ratio, BC coverage, and other vehicle-CFD rules.</p>
+
+<p>Nothing leaves your laptop. No upload server, no account, no cookie. A single static HTML file does the work entirely client-side, which makes OCV usable on locked-down clusters, in motorsport teams with proprietary geometry, and in academic groups with sensitive cases.</p>
+
+<p>OCV is tuned for vehicle aerodynamics — bluff-body external flow at Re ≈ 10⁶–10⁷, U∞ up to 100 m/s, incompressible air, snappyHexMesh on a triSurface body in a rectangular wind tunnel. Other regimes parse and display, but the rules will be less informed.</p>
+
+<h2>Built with, indebted to</h2>
+<ul>
+  <li><strong>OpenFOAM</strong> — every dictionary key OCV reads</li>
+  <li><strong>Three.js · JSZip · pako</strong> — viewport, archive, gzip</li>
+  <li><strong>GitHub · Vercel</strong> — source &amp; static hosting</li>
+  <li><strong>Autodesk Fusion 360</strong> — demo motorbike geometry</li>
+  <li><strong>Claude</strong> (Anthropic) — pair-programmer for this codebase</li>
+</ul>
+
+<h2>Contributions welcome</h2>
+<p>MIT-licensed, free, no paid tier. PRs for additional parsers, validation rules, turbulence models, and translations are all welcome. If OCV mis-parses your case, open an issue with a minimal reproducer.</p>
+
+
+<p style="margin-top:24px;font-size:11px;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.16em;">PROJECT OCV · Edition 0.0.5.X2</p>
+`;
+document.getElementById('aboutBody').innerHTML = ABOUT_HTML;
+document.getElementById('footerAbout').addEventListener('click', e => { e.preventDefault(); renderSetupPane('info'); openModal('modalSetup'); });
+
+/* ===================== SETUP POPUP + COLOR THEMES ===================== */
+const COLOR_THEMES = {
+  default_dark: {
+    name: 'Default Dark',
+    desc: 'Cyberpunk red + cyan',
+    swatches: ['#0c0c0c', '#161616', '#ff2a44', '#00d9ff', '#f0f0f0'],
+    vars: {
+      '--bg':'#0c0c0c','--bg-alt':'#161616','--bg-deep':'#0a0a0a','--panel':'#131313',
+      '--line':'#303030','--line-soft':'#1f1f1f',
+      '--text':'#f0f0f0','--text-soft':'#b8b8b8','--text-mute':'#777',
+      '--accent-red':'#ff2a44','--accent-red-dim':'#b71c1c',
+      '--accent-cyan':'#00d9ff','--accent-cyan-dim':'#0099cc',
+      '--glow-red':'0 0 16px rgba(255,42,68,.65),0 0 2px rgba(255,42,68,.9)',
+      '--glow-cyan':'0 0 14px rgba(0,217,255,.55),0 0 2px rgba(0,217,255,.85)'
+    }
+  },
+  carbon: {
+    name: 'Carbon',
+    desc: 'Pure mono, no neon',
+    swatches: ['#0a0a0a', '#1a1a1a', '#cccccc', '#888888', '#ffffff'],
+    vars: {
+      '--bg':'#0a0a0a','--bg-alt':'#141414','--bg-deep':'#080808','--panel':'#101010',
+      '--line':'#2a2a2a','--line-soft':'#1a1a1a',
+      '--text':'#ffffff','--text-soft':'#bbbbbb','--text-mute':'#666',
+      '--accent-red':'#cccccc','--accent-red-dim':'#888888',
+      '--accent-cyan':'#888888','--accent-cyan-dim':'#555',
+      '--glow-red':'0 0 6px rgba(255,255,255,.25)',
+      '--glow-cyan':'0 0 6px rgba(255,255,255,.15)'
+    }
+  },
+  ferrari: {
+    name: 'Ferrari',
+    desc: 'Classic racing red',
+    swatches: ['#0e0a0a', '#1a1212', '#dc0000', '#ffd700', '#fff'],
+    vars: {
+      '--bg':'#0e0a0a','--bg-alt':'#1a1212','--bg-deep':'#0a0606','--panel':'#150f0f',
+      '--line':'#3a2a2a','--line-soft':'#241a1a',
+      '--text':'#ffffff','--text-soft':'#d8c8c8','--text-mute':'#7d6868',
+      '--accent-red':'#dc0000','--accent-red-dim':'#a00000',
+      '--accent-cyan':'#ffd700','--accent-cyan-dim':'#c8a000',
+      '--glow-red':'0 0 18px rgba(220,0,0,.7),0 0 2px rgba(220,0,0,1)',
+      '--glow-cyan':'0 0 12px rgba(255,215,0,.5),0 0 2px rgba(255,215,0,.85)'
+    }
+  },
+  blueprint: {
+    name: 'Blueprint',
+    dark: false,
+    desc: 'Engineering paper light',
+    swatches: ['#fafafa', '#ececec', '#c8102e', '#4a4a4a', '#0a0a0a'],
+    vars: {
+      '--bg':'#fafafa','--bg-alt':'#ececec','--bg-deep':'#dadada','--panel':'#f0f0f0',
+      '--line':'#b8b8b8','--line-soft':'#d0d0d0',
+      '--text':'#0a0a0a','--text-soft':'#444','--text-mute':'#777',
+      '--accent-red':'#c8102e','--accent-red-dim':'#a00d24',
+      '--accent-cyan':'#4a4a4a','--accent-cyan-dim':'#2a2a2a',
+      '--glow-red':'0 0 8px rgba(200,16,46,.35)',
+      '--glow-cyan':'0 0 6px rgba(80,80,80,.3)'
+    }
+  },
+  terminal: {
+    name: 'Terminal',
+    desc: 'Amber CRT',
+    swatches: ['#000000', '#0a0805', '#ffb060', '#ff7030', '#ffd070'],
+    vars: {
+      '--bg':'#000000','--bg-alt':'#0a0805','--bg-deep':'#020100','--panel':'#0a0805',
+      '--line':'#3a2c14','--line-soft':'#241a0a',
+      '--text':'#ffb060','--text-soft':'#cc8a40','--text-mute':'#7d6634',
+      '--accent-red':'#ff7030','--accent-red-dim':'#cc4a18',
+      '--accent-cyan':'#ffd070','--accent-cyan-dim':'#a07820',
+      '--glow-red':'0 0 14px rgba(255,112,48,.6),0 0 2px rgba(255,112,48,.85)',
+      '--glow-cyan':'0 0 12px rgba(255,208,112,.5),0 0 2px rgba(255,208,112,.8)'
+    }
+  },
+  matrix: {
+    name: 'Matrix',
+    desc: 'Phosphor green CRT',
+    swatches: ['#000000', '#001008', '#00ff41', '#80ff80', '#008820'],
+    vars: {
+      '--bg':'#000000','--bg-alt':'#001008','--bg-deep':'#000400','--panel':'#001a0c',
+      '--line':'#0a3a18','--line-soft':'#06200c',
+      '--text':'#00ff41','--text-soft':'#00b030','--text-mute':'#006a20',
+      '--accent-red':'#80ffa0','--accent-red-dim':'#40c070',
+      '--accent-cyan':'#00ff80','--accent-cyan-dim':'#00a050',
+      '--glow-red':'0 0 14px rgba(0,255,65,.6),0 0 2px rgba(0,255,65,.9)',
+      '--glow-cyan':'0 0 12px rgba(0,255,128,.55),0 0 2px rgba(0,255,128,.85)'
+    }
+  }
+};
+
+let currentTheme = 'default_dark';
+
+function applyColorTheme(themeKey) {
+  const t = COLOR_THEMES[themeKey];
+  if (!t) return;
+  const isLight = (t.dark === false);
+  // Remember the last dark theme so the LT/DK toggle can return to it.
+  if (!isLight) lastDarkTheme = themeKey;
+  // The base CSS declares variables on `:root` (html) AND on
+  // `[data-theme="dark"]`/`[data-theme="light"]` (body). Body's own
+  // declarations override inline styles set on documentElement, so we have
+  // to set the overrides on BOTH html AND body. We also tag the body so
+  // [data-theme] keys still work for any rule that switches on it.
+  const root = document.documentElement;
+  Object.entries(t.vars).forEach(([k, v]) => {
+    root.style.setProperty(k, v);
+    document.body.style.setProperty(k, v);
+  });
+  // tag the body so [data-theme] selectors agree with the active theme
+  document.body.dataset.theme = isLight ? 'light' : 'dark';
+  currentTheme = themeKey;
+  // sync the Strip 0 LT/DK toggle visual state
+  document.querySelectorAll('#themeToggle div').forEach(d => {
+    d.classList.toggle('on',
+      (d.dataset.mode === 'light' && isLight) ||
+      (d.dataset.mode === 'dark' && !isLight));
+  });
+  // also re-apply Three.js scene colors
+  if (Viewer && Viewer.applyTheme) Viewer.applyTheme();
+  if (Viewer && Viewer.axes && Viewer.scene) {
+    // re-create the gnomon to pick up the new --text-soft monotone color
+    const L = Viewer.axisLen || 2.5;
+    Viewer.scene.remove(Viewer.axes);
+    Viewer.axes = makeAxes(L);
+    Viewer.scene.add(Viewer.axes);
+  }
+  log(`Theme: ${t.name}`, 'ok');
+}
+
+function renderSetupPane(paneKey) {
+  const pane = document.getElementById('setupPane');
+  if (!pane) return;
+  document.querySelectorAll('#setupList button').forEach(b => b.classList.toggle('active', b.dataset.pane === paneKey));
+  if (paneKey === 'theme') {
+    let html = '<h2>Color Theme</h2><div class="theme-options">';
+    for (const [k, t] of Object.entries(COLOR_THEMES)) {
+      const swatchSpans = t.swatches.map(c => `<span style="background:${c};"></span>`).join('');
+      const sel = (k === currentTheme) ? ' selected' : '';
+      html += `
+        <div class="theme-card${sel}" data-theme="${k}">
+          <div class="theme-swatches">${swatchSpans}</div>
+          <div class="theme-name">${t.name}</div>
+          <div class="theme-desc">${t.desc}</div>
+        </div>`;
+    }
+    html += '</div>';
+    pane.innerHTML = html;
+    pane.querySelectorAll('.theme-card').forEach(card => {
+      card.addEventListener('click', () => {
+        applyColorTheme(card.dataset.theme);
+        pane.querySelectorAll('.theme-card').forEach(c => c.classList.toggle('selected', c.dataset.theme === card.dataset.theme));
+      });
+    });
+  } else if (paneKey === 'rendering') {
+    pane.innerHTML = `
+      <h2>Rendering</h2>
+      <p style="font-size:12px;color:var(--text-soft);">Settings affect the 3D viewport. They take effect immediately.</p>
+      <div style="display:grid;gap:10px;margin-top:14px;">
+        <label style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Auto-rotate speed</span>
+          <input type="range" id="setRotSpeed" min="0" max="20" value="${Math.round((Viewer.autoRotSpeed || 0.004)*1000)}" style="width:140px;">
+        </label>
+        <label style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Layer roughness</span>
+          <input type="range" id="setRough" min="0" max="100" value="78" style="width:140px;">
+        </label>
+        <label style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Edges opacity</span>
+          <input type="range" id="setEdgeOp" min="0" max="100" value="50" style="width:140px;">
+        </label>
+      </div>`;
+    pane.querySelector('#setRotSpeed').addEventListener('input', e => {
+      Viewer.autoRotSpeed = parseInt(e.target.value, 10) / 1000;
+    });
+  } else if (paneKey === 'behavior') {
+    pane.innerHTML = `
+      <h2>Behavior</h2>
+      <p style="font-size:12px;color:var(--text-soft);">Auto-load the demo on first open, scanline overlay, and console retention.</p>
+      <div style="display:grid;gap:12px;margin-top:14px;font-size:12px;">
+        <label style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Scanline overlay</span>
+          <input type="checkbox" id="setScan" checked>
+        </label>
+        <label style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Cancel auto-rotate on click</span>
+          <input type="checkbox" id="setCancelAR" checked>
+        </label>
+        <label style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Keep console history</span>
+          <input type="checkbox" id="setKeepHist" checked>
+        </label>
+      </div>`;
+    pane.querySelector('#setScan').addEventListener('change', e => {
+      const ov = document.querySelector('body::before');
+      // simulate by toggling a class
+      document.body.classList.toggle('no-scanlines', !e.target.checked);
+    });
+  } else if (paneKey === 'sections') {
+    const hidden = getHiddenSections();
+    let html = '<h2>Dashboard Sections</h2>' +
+      '<p style="font-size:12px;color:var(--text-soft);margin-bottom:14px;">' +
+      'Tick or untick to show/hide dashboard sections. Click the × on any section header in the dashboard to hide it from there too — toggle it back on here.</p>' +
+      '<div style="display:grid;gap:10px;">';
+    for (const s of STRIP3_SECTIONS) {
+      const isOn = !hidden.has(s.cls);
+      html += `<label style="display:flex;align-items:center;gap:12px;font-size:12px;cursor:pointer;padding:6px 10px;border:1px solid var(--line-soft);background:${isOn?'var(--bg-alt)':'var(--bg-deep)'};">
+        <input type="checkbox" data-section="${s.cls}" ${isOn?'checked':''}>
+        <span style="flex:1;">${s.title}</span>
+      </label>`;
+    }
+    html += '</div>' +
+      '<div style="margin-top:16px;display:flex;gap:6px;">' +
+      '<button id="setSecAll">Show All</button>' +
+      '<button id="setSecNone">Hide All</button>' +
+      '</div>';
+    pane.innerHTML = html;
+    pane.querySelectorAll('input[type=checkbox][data-section]').forEach(cb => {
+      cb.addEventListener('change', e => {
+        setSectionHidden(e.target.dataset.section, !e.target.checked);
+        renderSetupPane('sections');
+      });
+    });
+    document.getElementById('setSecAll').addEventListener('click', () => {
+      saveHiddenSections(new Set()); applyHiddenSections(); renderSetupPane('sections');
+    });
+    document.getElementById('setSecNone').addEventListener('click', () => {
+      saveHiddenSections(new Set(STRIP3_SECTIONS.map(s => s.cls))); applyHiddenSections(); renderSetupPane('sections');
+    });
+  } else if (paneKey === 'tutorials') {
+    // The two motorBike OF12 tutorials are hosted alongside the app
+    // (in /tutorials/ — repackaged from the OpenFOAM-12 master branch with
+    // geometry bundled). Click "Load Now" → fetched and parsed in-place.
+    // The other three tutorials are external links to download-directory.
+    const TUTORIALS = [
+      { name: 'motorBike (LES, transient) — bundled demo',
+        desc: 'Bundled — Spalart-Allmaras DDES, pisoFoam, U=100 m/s. The Chien & Wang 2024 reference case.',
+        size: '~9 MB', kind: 'bundled' },
+      { name: 'motorBike (LES) — OpenFOAM official',
+        desc: 'OF12 official transient case — RANS precursor handed off to S-A DDES via lesFiles/. Geometry bundled.',
+        size: '~3.6 MB', kind: 'hosted', url: '/tutorials/motorBike_LES.zip' },
+      { name: 'motorBike (Steady RANS) — OpenFOAM official',
+        desc: 'OF12 official — k-ω SST, simpleFoam, vehicle aerodynamics baseline. Geometry bundled.',
+        size: '~3.6 MB', kind: 'hosted', url: '/tutorials/motorBikeSteady_RANS.zip' },
+      { name: 'pitzDaily (RANS)',
+        desc: 'Backward-facing step — classic separated flow benchmark, k-ω SST.',
+        size: '~50 KB', kind: 'github',
+        repo: 'OpenFOAM/OpenFOAM-12', path: 'tutorials/incompressibleFluid/pitzDaily' },
+      { name: 'cavity (icoFoam)',
+        desc: '2D lid-driven cavity — every CFD textbook starts here.',
+        size: '~30 KB', kind: 'github',
+        repo: 'OpenFOAM/OpenFOAM-12', path: 'tutorials/incompressibleFluid/cavity' },
+      { name: 'windAroundBuildings',
+        desc: 'Urban CFD — atmospheric boundary layer over a city block.',
+        size: '~200 KB', kind: 'github',
+        repo: 'OpenFOAM/OpenFOAM-12', path: 'tutorials/incompressibleFluid/windAroundBuildings' }
+    ];
+    let html = '<h2>OpenFOAM Tutorial Cases</h2>' +
+      '<p style="font-size:12px;color:var(--text-soft);margin-bottom:14px;">' +
+      'Five reference cases for testing OCV. The first is bundled and loads instantly. The other four open the official OpenFOAM-12 tutorial folder on GitHub via <code>download-directory.github.io</code>, which produces a zip you can drop back onto OCV.</p>' +
+      '<div style="display:grid;gap:8px;">';
+    for (const tc of TUTORIALS) {
+      let tag;
+      if (tc.kind === 'bundled') {
+        tag = '<span style="background:var(--accent-red);color:#fff;padding:1px 6px;font-size:8px;letter-spacing:0.1em;">BUNDLED</span>';
+      } else if (tc.kind === 'hosted') {
+        tag = '<span style="background:var(--accent-red);color:#fff;padding:1px 6px;font-size:8px;letter-spacing:0.1em;">SELF-HOSTED</span>';
+      } else {
+        tag = '<span style="background:var(--accent-cyan);color:#000;padding:1px 6px;font-size:8px;letter-spacing:0.1em;">GITHUB</span>';
+      }
+      let buttons;
+      if (tc.kind === 'bundled') {
+        buttons = '<button data-tut="demo" style="font-size:9px;">Load Now</button>';
+      } else if (tc.kind === 'hosted') {
+        buttons = `<button data-hosted="${tc.url}" data-name="${tc.name}" style="font-size:9px;">Load Now</button>`
+                + ` <button data-download="${tc.url}" style="font-size:9px;">Download .zip</button>`;
+      } else {
+        buttons = `<button data-tut="${tc.path}" data-repo="${tc.repo || ''}" style="font-size:9px;">Download via GitHub</button>`;
+      }
+      html += `<div style="border:1px solid var(--line);padding:10px 12px;background:var(--bg-alt);">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+          ${tag}
+          <strong style="font-size:12px;">${tc.name}</strong>
+          <span style="margin-left:auto;font-family:JetBrains Mono,monospace;font-size:9px;color:var(--text-mute);">${tc.size}</span>
+        </div>
+        <p style="font-size:10px;color:var(--text-soft);margin:4px 0 8px;">${tc.desc}</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">${buttons}</div>
+      </div>`;
+    }
+    html += '</div>';
+    pane.innerHTML = html;
+    pane.querySelectorAll('button[data-tut]').forEach(b => {
+      b.addEventListener('click', () => {
+        const tut = b.dataset.tut;
+        if (tut === 'demo') { closeModal('modalSetup'); loadDemo(); return; }
+        const url = `https://download-directory.github.io/?url=${encodeURIComponent('https://github.com/' + b.dataset.repo + '/tree/master/' + tut)}`;
+        window.open(url, '_blank');
+      });
+    });
+    pane.querySelectorAll('button[data-hosted]').forEach(b => {
+      b.addEventListener('click', () => {
+        closeModal('modalSetup');
+        loadCaseFromUrl(b.dataset.hosted, b.dataset.name);
+      });
+    });
+    pane.querySelectorAll('button[data-download]').forEach(b => {
+      b.addEventListener('click', () => window.open(b.dataset.download, '_blank'));
+    });
+          } else if (paneKey === 'info') {
+    pane.innerHTML = `
+      <h2>About · Info</h2>
+      <div style="font-size:12px;line-height:1.65;">
+        <p style="font-style:italic;color:var(--text-soft);margin-bottom:14px;">
+          A free, browser-based pre-flight check for vehicle CFD cases.
+          Catch a misnamed boundary or an out-of-band CFL before the cluster eats your night.
+        </p>
+
+        <h3 style="font-family:'Saira Condensed',sans-serif;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--accent-cyan);margin:14px 0 6px;">What it does</h3>
+        <p>Drop a zipped OpenFOAM case onto the page. OCV unpacks it in your browser, parses every dictionary it can find — <code>controlDict</code>, <code>fvSchemes</code>, <code>blockMeshDict</code>, <code>snappyHexMeshDict</code>, <code>forceCoeffs</code>, <code>0/U</code>, and the rest — renders the geometry in 3D, and lays the parsed values across twelve dashboard sections. A one-click validator checks Mach, CFL, refinement levels, blockage ratio, BC coverage, and other vehicle-CFD rules.</p>
+
+        <h3 style="font-family:'Saira Condensed',sans-serif;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--accent-cyan);margin:14px 0 6px;">Privacy</h3>
+        <p>Nothing leaves your laptop. No upload server, account, or cookie. A single static HTML file runs entirely client-side — usable on locked-down clusters, in motorsport teams with proprietary geometry, and in academic groups with sensitive cases.</p>
+
+        <h3 style="font-family:'Saira Condensed',sans-serif;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--accent-cyan);margin:14px 0 6px;">Scope</h3>
+        <p>Tuned for vehicle aerodynamics — bluff-body external flow at Re ≈ 10⁶–10⁷, U∞ up to 100 m/s, incompressible air, snappyHexMesh on a triSurface body in a rectangular wind tunnel. Other regimes parse and display, but the rules will be less informed.</p>
+
+        <h3 style="font-family:'Saira Condensed',sans-serif;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--accent-cyan);margin:14px 0 6px;">Built with</h3>
+        <p>OpenFOAM · Three.js r128 · JSZip 3.10 · pako 2.1 · GitHub · Vercel · Autodesk Fusion 360 · Claude (Anthropic). MIT-licensed, free, no paid tier. PRs welcome.</p>
+
+        <table style="width:100%;margin-top:14px;font-family:'JetBrains Mono',monospace;font-size:10px;border-collapse:collapse;">
+          <tr><td style="color:var(--text-mute);padding:3px 0;">Edition</td><td style="color:var(--text);">0.0.5.X2</td></tr>
+          <tr><td style="color:var(--text-mute);padding:3px 0;">Source</td><td><a href="https://github.com/13studio-sudo/ocv.git" target="_blank" rel="noopener" style="color:var(--accent-red);">github.com/13studio-sudo/ocv.git</a></td></tr>
+        </table>
+
+        <p style="margin-top:18px;font-size:10px;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.14em;">
+          © SHIBAYAMA MOTOR RACING ·
+          design &amp; development by
+          <a href="https://13studio.co" target="_blank" rel="noopener" style="color:var(--text-soft);">13studio</a>
+        </p>
+      </div>`;
+  }
+}
+
+document.getElementById('btnSetup').addEventListener('click', () => {
+  renderSetupPane('theme');
+  openModal('modalSetup');
+});
+document.querySelectorAll('#setupList button').forEach(b => {
+  b.addEventListener('click', () => renderSetupPane(b.dataset.pane));
+});
+
+/* hide scanlines class */
+const styleScan = document.createElement('style');
+styleScan.textContent = '.no-scanlines body::before, body.no-scanlines::before { display: none; }';
+document.head.appendChild(styleScan);
+
+/* ===================== TELEMETRY — mouse XYZ over time =====================
+   Motorsport-style 3-trace plot of mouse movement on the 3D viewer.
+   - dX (red): horizontal mouse velocity over canvas (px/sample)
+   - dY (cyan): vertical mouse velocity over canvas
+   - Z  (text): wheel input (zoom) — decays back toward zero
+   X axis is time (newest sample on the right). Y is signed velocity, ±20 px clip.
+   ============================================================================= */
+const Telemetry = {
+  history: [],          // array of { t, dx, dy, dz }
+  maxPoints: 280,
+  el: null,
+  mouseX: 0, mouseY: 0, prevMX: 0, prevMY: 0,
+  pendingDx: 0, pendingDy: 0, wheelZ: 0,
+  inside: false,
+  sampleMs: 10,         // default 3x faster than the previous 30 ms
+  _timer: null,
+  init() {
+    this.el = document.getElementById('telemetry');
+    if (!this.el) return;
+    // pull saved rate from localStorage (range 5–100 ms)
+    const savedRate = parseInt(localStorage.getItem('ocv-tlm-rate') || '', 10);
+    if (!Number.isNaN(savedRate) && savedRate >= 5 && savedRate <= 100) this.sampleMs = savedRate;
+    this.el.innerHTML =
+      '<div class="tlm-label">3D Viewer Telemetry · mouse Δ</div>' +
+      '<div class="tlm-legend"><span style="color:var(--accent-red);"><i></i>X</span>' +
+      '<span style="color:var(--accent-cyan);"><i></i>Y</span>' +
+      '<span style="color:var(--text);"><i></i>Z</span></div>' +
+      '<div class="tlm-rate" title="Sample interval (ms) — lower = faster scan">' +
+      '<input type="range" id="tlmRate" min="5" max="100" step="1" value="' + this.sampleMs + '">' +
+      '<span class="tlm-rate-val" id="tlmRateVal">' + this.sampleMs + 'ms</span>' +
+      '</div>' +
+      '<div class="tlm-stat" id="tlmStat">— idle —</div>' +
+      '<svg viewBox="0 0 280 160" preserveAspectRatio="none">' +
+      '<line class="tlm-bg-line" x1="0"   y1="80" x2="280" y2="80"/>' +
+      '<line class="tlm-bg-line" x1="0"   y1="40" x2="280" y2="40"/>' +
+      '<line class="tlm-bg-line" x1="0"   y1="120" x2="280" y2="120"/>' +
+      '<line class="tlm-bg-line" x1="70"  y1="0"  x2="70"  y2="160"/>' +
+      '<line class="tlm-bg-line" x1="140" y1="0"  x2="140" y2="160"/>' +
+      '<line class="tlm-bg-line" x1="210" y1="0"  x2="210" y2="160"/>' +
+      '<polyline id="tlmLineX" fill="none" stroke="var(--accent-red)" stroke-width="1.1"/>' +
+      '<polyline id="tlmLineY" fill="none" stroke="var(--accent-cyan)" stroke-width="1.1"/>' +
+      '<polyline id="tlmLineZ" fill="none" stroke="var(--text)" stroke-width="0.9" opacity="0.65"/>' +
+      '</svg>';
+    // wire the rate slider — restarts the sampling interval and persists choice
+    const rate = document.getElementById('tlmRate');
+    const rateVal = document.getElementById('tlmRateVal');
+    if (rate) {
+      rate.addEventListener('input', e => {
+        const v = parseInt(e.target.value, 10);
+        this.sampleMs = v;
+        if (rateVal) rateVal.textContent = v + 'ms';
+        localStorage.setItem('ocv-tlm-rate', String(v));
+        this._restartTimer();
+      });
+    }
+    // attach pointer listeners to the 3D viewer canvas
+    const canvas = document.getElementById('viewer-canvas');
+    if (canvas) {
+      canvas.addEventListener('pointermove', e => {
+        const r = canvas.getBoundingClientRect();
+        const nx = e.clientX - r.left, ny = e.clientY - r.top;
+        this.pendingDx += (nx - this.mouseX);
+        this.pendingDy += (ny - this.mouseY);
+        this.mouseX = nx; this.mouseY = ny;
+        this.inside = true;
+      });
+      canvas.addEventListener('pointerleave', () => { this.inside = false; });
+      canvas.addEventListener('wheel', e => { this.wheelZ += e.deltaY * 0.05; }, { passive: true });
+    }
+    this._restartTimer();
+  },
+  _restartTimer() {
+    if (this._timer) clearInterval(this._timer);
+    this._timer = setInterval(() => this.sample(), this.sampleMs);
+  },
+  sample() {
+    const dx = this.inside ? this.pendingDx : 0;
+    const dy = this.inside ? this.pendingDy : 0;
+    const dz = this.wheelZ;
+    this.pendingDx = 0; this.pendingDy = 0;
+    this.wheelZ *= 0.78;          // exponential decay back to 0
+    if (Math.abs(this.wheelZ) < 0.02) this.wheelZ = 0;
+    this.history.push({ t: performance.now(), dx, dy, dz });
+    while (this.history.length > this.maxPoints) this.history.shift();
+    this.draw();
+  },
+  draw() {
+    const lineX = document.getElementById('tlmLineX');
+    const lineY = document.getElementById('tlmLineY');
+    const lineZ = document.getElementById('tlmLineZ');
+    const stat  = document.getElementById('tlmStat');
+    if (!lineX || !this.history.length) return;
+    const w = 280, mid = 80, range = 40;
+    const N = this.history.length;
+    const ptsX = [], ptsY = [], ptsZ = [];
+    const clip = v => Math.max(-range, Math.min(range, v));
+    for (let i = 0; i < N; i++) {
+      const x = (i / (this.maxPoints - 1)) * w;
+      const e = this.history[i];
+      ptsX.push(`${x.toFixed(1)},${(mid - clip(e.dx)).toFixed(1)}`);
+      ptsY.push(`${x.toFixed(1)},${(mid - clip(e.dy)).toFixed(1)}`);
+      ptsZ.push(`${x.toFixed(1)},${(mid - clip(e.dz)).toFixed(1)}`);
+    }
+    lineX.setAttribute('points', ptsX.join(' '));
+    lineY.setAttribute('points', ptsY.join(' '));
+    lineZ.setAttribute('points', ptsZ.join(' '));
+    if (stat) {
+      const e = this.history[N - 1];
+      const fmt = v => (v >= 0 ? '+' : '') + v.toFixed(1).padStart(5);
+      stat.textContent = `X${fmt(e.dx)}  Y${fmt(e.dy)}  Z${fmt(e.dz)}`;
+    }
+  }
+};
+window.addEventListener('load', () => setTimeout(() => Telemetry.init(), 800));
+
+/* ===================== STRIP 3 — close / re-add sections ===================== */
+const STRIP3_SECTIONS = [
+  { cls: 's-workflow', title: '01 · Workflow Pipeline' },
+  { cls: 's-models',   title: '02 · Models · Schemes' },
+  { cls: 's-equations',title: '03 · Governing Equations' },
+  { cls: 's-bcs',      title: '04 · Boundary Patches' },
+  { cls: 's-params',   title: '05 · Parameters · CFL' },
+  { cls: 's-mesh',     title: '06 · Mesh Setup' },
+  { cls: 's-aero',     title: '07 · Aerodynamics' },
+  { cls: 's-init',     title: '08 · Initial Conditions',  defaultHidden: true },
+  { cls: 's-quality',  title: '09 · Mesh Quality',         defaultHidden: true },
+  { cls: 's-functions',title: '10 · Function Objects',     defaultHidden: true },
+  { cls: 's-decomp',   title: '11 · Parallel Decomposition', defaultHidden: true }
+];
+
+// On first visit, hide the v2.0.3 default-hidden sections. After that, the
+// user's localStorage preference controls everything.
+function applyDefaultHiddenSections() {
+  const KEY = 'ocv-sections-init-v203';
+  if (localStorage.getItem(KEY)) return;
+  const initial = new Set(STRIP3_SECTIONS.filter(s => s.defaultHidden).map(s => s.cls));
+  saveHiddenSections(initial);
+  localStorage.setItem(KEY, '1');
+}
+const SECTIONS_KEY = 'ocv-hidden-sections';
+function getHiddenSections() {
+  try { return new Set(JSON.parse(localStorage.getItem(SECTIONS_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+function saveHiddenSections(set) { localStorage.setItem(SECTIONS_KEY, JSON.stringify([...set])); }
+function applyHiddenSections() {
+  const hidden = getHiddenSections();
+  STRIP3_SECTIONS.forEach(({cls}) => {
+    const sec = document.querySelector(`.${cls}`);
+    if (sec) sec.classList.toggle('hidden', hidden.has(cls));
+  });
+}
+function setSectionHidden(cls, isHidden) {
+  const hidden = getHiddenSections();
+  if (isHidden) hidden.add(cls); else hidden.delete(cls);
+  saveHiddenSections(hidden);
+  applyHiddenSections();
+}
+function injectSectionCloseButtons() {
+  STRIP3_SECTIONS.forEach(({cls}) => {
+    const sec = document.querySelector(`.${cls}`);
+    if (!sec) return;
+    const h3 = sec.querySelector('h3');
+    if (!h3 || h3.querySelector('.section-close')) return;
+    const close = document.createElement('button');
+    close.className = 'section-close';
+    close.textContent = '×';
+    close.title = 'Hide section · re-enable via Setup → Sections';
+    close.addEventListener('click', e => {
+      e.stopPropagation();
+      setSectionHidden(cls, true);
+    });
+    h3.appendChild(close);
+  });
+  applyHiddenSections();
+}
+window.addEventListener('load', () => setTimeout(() => {
+  applyDefaultHiddenSections();
+  injectSectionCloseButtons();
+}, 200));
+
+log('OCV ready · drop a .zip or click Demo', 'ok');
+
+</script>
+</body>
+</html>
