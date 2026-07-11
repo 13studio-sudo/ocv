@@ -114,4 +114,4 @@ MIT-licensed, free, no paid tier. PRs for additional parsers, validation rules, 
 
 ---
 
-© Project OCV · SHIBAYAMA MOTOR RACING · design & development by [13studio](https://13studio.co)
+© Project OCV · SHIBAYAMA RACING · design & development by [13studio](https://13studio.co)
